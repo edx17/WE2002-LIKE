@@ -1,0 +1,36 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/match/match_controller.gd" id="1_match"]
+[ext_resource type="Script" path="res://scripts/camera/we_camera.gd" id="2_cam"]
+[ext_resource type="Script" path="res://scripts/match/match_hud.gd" id="3_hud"]
+
+[sub_resource type="ProceduralSkyMaterial" id="Sky_mat"]
+sky_top_color = Color(0.32, 0.5, 0.78, 1)
+sky_horizon_color = Color(0.7, 0.78, 0.86, 1)
+
+[sub_resource type="Sky" id="Sky_1"]
+sky_material = SubResource("Sky_mat")
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 2
+sky = SubResource("Sky_1")
+ambient_light_source = 3
+tonemap_mode = 2
+
+[node name="Match" type="Node3D"]
+script = ExtResource("1_match")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 30, 0)
+shadow_enabled = true
+directional_shadow_max_distance = 120.0
+
+[node name="Camera" type="Camera3D" parent="."]
+fov = 42.0
+script = ExtResource("2_cam")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("3_hud")

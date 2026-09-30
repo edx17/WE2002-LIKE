@@ -1,0 +1,22 @@
+{
+  "name": "Jugador 02",
+  "number": 4,
+  "position": "CB",
+  "preferred_foot": "left",
+  "weak_foot": 1,
+  "speed": 76,
+  "acceleration": 72,
+  "agility": 68,
+  "balance": 82,
+  "strength": 86,
+  "stamina": 84,
+  "passing": 68,
+  "shooting": 50,
+  "shot_power": 75,
+  "heading": 85,
+  "tackling": 86,
+  "control": 66,
+  "technique": 60,
+  "aggression": 78,
+  "reaction": 74
+}

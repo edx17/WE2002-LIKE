@@ -1,0 +1,8 @@
+{
+  "name": "Etapa 1 — 1 vs 1",
+  "direction_steps": 8,
+  "teams": [
+    { "id": "team_a", "attack_dir": 1, "players": [ { "id": "atacante_01", "control": "human", "home": [-10, 0] } ] },
+    { "id": "team_b", "attack_dir": -1, "players": [ { "id": "defensor_01", "control": "ai", "home": [20, 0] } ] }
+  ]
+}

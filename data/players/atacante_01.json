@@ -1,0 +1,22 @@
+{
+  "name": "Jugador 01",
+  "number": 9,
+  "position": "CF",
+  "preferred_foot": "right",
+  "weak_foot": 2,
+  "speed": 83,
+  "acceleration": 87,
+  "agility": 84,
+  "balance": 78,
+  "strength": 72,
+  "stamina": 88,
+  "passing": 84,
+  "shooting": 79,
+  "shot_power": 82,
+  "heading": 70,
+  "tackling": 40,
+  "control": 91,
+  "technique": 86,
+  "aggression": 55,
+  "reaction": 85
+}
