@@ -1,0 +1,25 @@
+{
+  "_doc": "Modelo de comportamiento objetivo, medido observando WE2002 (ver docs/INGENIERIA_INVERSA.md). 'target' = null significa PENDIENTE DE MEDIR: no se inventan valores. 'tolerance' es relativa (0.1 = ±10 %). Registrar siempre 'source' (captura, frames, escala usada) y 'samples' (cuántas mediciones promediadas). tests/behavior_probe.gd mide lo mismo en nuestro motor y compara.",
+  "metrics": {
+    "jog_top_speed":            { "unit": "m/s", "target": null, "tolerance": 0.08, "source": "", "samples": 0, "method": "Jugador sin pelota, stick fijo, sin sprint. Distancia recorrida en 1 s ya a velocidad constante, escala con líneas del campo." },
+    "sprint_top_speed":         { "unit": "m/s", "target": null, "tolerance": 0.08, "source": "", "samples": 0, "method": "Igual que jog_top_speed con sprint." },
+    "dribble_sprint_speed":     { "unit": "m/s", "target": null, "tolerance": 0.08, "source": "", "samples": 0, "method": "Sprint conduciendo la pelota." },
+    "time_to_90pct_sprint":     { "unit": "s",   "target": null, "tolerance": 0.15, "source": "", "samples": 0, "method": "Desde parado: frames entre el primer frame de input y el primero con ≥ 90 % de la velocidad máxima." },
+    "stop_time_from_sprint":    { "unit": "s",   "target": null, "tolerance": 0.15, "source": "", "samples": 0, "method": "Soltar el stick a velocidad máxima: frames hasta quedar quieto." },
+    "stop_distance_from_sprint":{ "unit": "m",   "target": null, "tolerance": 0.15, "source": "", "samples": 0, "method": "Distancia recorrida en la frenada anterior." },
+    "turn_45_time_jog":         { "unit": "s",   "target": null, "tolerance": 0.2,  "source": "", "samples": 0, "method": "Trotando, cambiar el stick 45°: frames hasta que el cuerpo mira la nueva dirección." },
+    "turn_180_time_sprint":     { "unit": "s",   "target": null, "tolerance": 0.2,  "source": "", "samples": 0, "method": "Sprintando, invertir el stick: frames hasta avanzar en sentido contrario a ≥ 50 % de la velocidad de trote." },
+    "dribble_ball_gap_jog":     { "unit": "m",   "target": null, "tolerance": 0.2,  "source": "", "samples": 0, "method": "Distancia media pie-pelota conduciendo al trote." },
+    "dribble_ball_gap_sprint":  { "unit": "m",   "target": null, "tolerance": 0.2,  "source": "", "samples": 0, "method": "Distancia media pie-pelota conduciendo en sprint (largo de los toques)." },
+    "pass_windup":              { "unit": "s",   "target": null, "tolerance": 0.25, "source": "", "samples": 0, "method": "Frames entre soltar PASE y que la pelota se mueve." },
+    "shot_windup":              { "unit": "s",   "target": null, "tolerance": 0.25, "source": "", "samples": 0, "method": "Frames entre soltar REMATE y que la pelota sale." },
+    "pass_speed_half_bar":      { "unit": "m/s", "target": null, "tolerance": 0.12, "source": "", "samples": 0, "method": "Velocidad de salida de un pase a ras con media barra, sin compañero (al espacio)." },
+    "pass_travel_20m":          { "unit": "s",   "target": null, "tolerance": 0.12, "source": "", "samples": 0, "method": "Tiempo que tarda ese pase en recorrer 20 m." },
+    "shot_speed_half_bar":      { "unit": "m/s", "target": null, "tolerance": 0.12, "source": "", "samples": 0, "method": "Velocidad de salida de un remate con media barra." },
+    "shot_speed_full_bar":      { "unit": "m/s", "target": null, "tolerance": 0.12, "source": "", "samples": 0, "method": "Velocidad de salida con barra llena." },
+    "lob_flight_30m":           { "unit": "s",   "target": null, "tolerance": 0.15, "source": "", "samples": 0, "method": "Tiempo de vuelo de un globo que cae a 30 m." },
+    "camera_pitch_deg":         { "unit": "°",   "target": null, "tolerance": 0.1,  "source": "", "samples": 0, "method": "Ángulo de la cámara respecto del césped, por perspectiva de las líneas del área (fuga)." },
+    "camera_visible_length":    { "unit": "m",   "target": null, "tolerance": 0.1,  "source": "", "samples": 0, "method": "Metros de largo de campo visibles en el centro de la pantalla con zoom normal." },
+    "camera_lead_swing":        { "unit": "s",   "target": null, "tolerance": 0.25, "source": "", "samples": 0, "method": "Tras un cambio de posesión, tiempo hasta que la cámara cruza el centro hacia el nuevo lado de ataque." }
+  }
+}

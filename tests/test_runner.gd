@@ -40,6 +40,7 @@ func _run() -> void:
 	await _test_shot_scores()
 	await _test_dribble_keeps_ball()
 	await _test_human_shot_flow()
+	await _test_generated_model()
 	await _test_ai_match_soak()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
@@ -109,6 +110,43 @@ func _test_kick_formulas() -> void:
 	var bad := KickSolver.solve(req, rng)
 	check(bad.mishit and not good.mishit, "contacto 0.3 = le pegó mal")
 	check(bad.velocity.length() < good.velocity.length(), "mal contacto sale más flojo")
+
+
+func _test_generated_model() -> void:
+	print("Pipeline de assets: modelo generado + AnimationTree")
+	var m := _new_match("stage0_solo")
+	await _frames(2)
+	var p := m.players[0]
+	check(p.get_node_or_null("Visual/Model") != null, "PLAYER_001 (GLB generado) reemplaza a la cápsula")
+	var tree := p.get_node_or_null("AnimationTree") as AnimationTree
+	check(tree != null and p.animation_selector.driver is AnimationTreeDriver, "AnimationTree construido y conectado")
+	var shirt_ok := false
+	for mi in p.find_children("*", "MeshInstance3D", true, false):
+		for i in (mi as MeshInstance3D).mesh.get_surface_count():
+			var o := (mi as MeshInstance3D).get_surface_override_material(i) as StandardMaterial3D
+			shirt_ok = shirt_ok or (o != null and o.albedo_texture != null)
+	check(shirt_ok, "la camiseta del equipo se aplica como textura sobre el modelo")
+	check(is_equal_approx(PlayerController.SHOT_WINDUP, AnimationTimings.contact("SHOOT", -1.0)),
+		"la ventana de remate sale del mismo JSON que el clip")
+	var input := ScriptedInput.new()
+	p.input_source = input
+	p.teleport(Vector3(20, 0, 0), Vector3.RIGHT)
+	m.ball.place(Vector3(20.55, Ball.RADIUS, 0))
+	await _frames(30)
+	input.move = Vector2.RIGHT
+	input.sprint = true
+	await _frames(120)
+	var playback := tree.get("parameters/playback") as AnimationNodeStateMachinePlayback
+	var blend := float(tree.get("parameters/Locomotion/blend_position"))
+	check(playback.get_current_node() == &"Locomotion" and blend > 0.8, "sprint → Locomotion con blend %.2f" % blend)
+	input.release = PlayerIntent.Action.SHOOT
+	var saw_shoot := false
+	for i in 30:
+		await physics_frame
+		saw_shoot = saw_shoot or playback.get_current_node() == &"SHOOT" or playback.get_travel_path().has(&"SHOOT")
+	check(saw_shoot, "el gameplay dispara el clip SHOOT")
+	m.queue_free()
+	await _frames(1)
 
 
 func _test_data() -> void:

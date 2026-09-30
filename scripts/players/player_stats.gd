@@ -7,6 +7,8 @@ extends Resource
 @export var name := "Jugador"
 @export var number := 0
 @export var position := "CF"
+## Appearance recipe in data/appearance (-> assets/players/generated/<id>.glb).
+@export var appearance := ""
 @export_enum("right", "left") var preferred_foot := "right"
 ## 1..4 like the classic weak-foot rating: 4 = almost as good as the strong foot.
 @export_range(1, 4) var weak_foot := 2

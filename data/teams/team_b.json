@@ -1,5 +1,9 @@
 {
   "name": "Deportivo Vertical Slice",
   "short": "DVS",
-  "colors": { "primary": "#1e5bc6", "secondary": "#10204a" }
+  "colors": {
+    "primary": "#1e5bc6",
+    "secondary": "#10204a"
+  },
+  "kit": "team_b_home"
 }

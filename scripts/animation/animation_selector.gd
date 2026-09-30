@@ -5,8 +5,8 @@ extends Node
 ## The gameplay layer states facts ("sprinting forward, has the ball under
 ## control, turning 22° right"); this node turns them into clip names:
 ##   SPRINT_FORWARD + TURN_RIGHT + BALL_CONTROL
-## and hands them to a driver: the procedural placeholder today, an
-## AnimationTree once rigged GLB players exist.
+## and hands them to a driver: the procedural placeholder capsule, or the
+## AnimationTree of a generated GLB player (see PlayerModel).
 
 class Descriptor:
 	var locomotion := "IDLE"      ## IDLE / WALK / RUN / SPRINT
@@ -55,12 +55,15 @@ var driver: Object = null
 
 
 func _ready() -> void:
-	var player := get_parent() as PlayerController
-	var tree := player.get_node_or_null("AnimationTree") as AnimationTree
-	if tree != null:
-		driver = AnimationTreeDriver.new(tree)
-	else:
-		driver = PlaceholderAnimator.new(player.get_node("Visual") as Node3D)
+	# Placeholder until PlayerModel attaches a generated model + AnimationTree.
+	driver = PlaceholderAnimator.new((get_parent() as Node).get_node("Visual") as Node3D)
+
+
+func set_driver(new_driver: Object) -> void:
+	driver = new_driver
+	var visual := (get_parent() as Node).get_node("Visual") as Node3D
+	visual.rotation = Vector3.ZERO
+	visual.position = Vector3.ZERO
 
 
 static func evaluate(p: PlayerController) -> Descriptor:

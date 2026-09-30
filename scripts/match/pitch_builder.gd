@@ -15,19 +15,20 @@ const LAYER_WORLD := 1
 const LAYER_GOAL := 8
 
 
-static func build(parent: Node3D) -> Node3D:
+static func build(parent: Node3D, look: Dictionary = {}) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Pitch"
 	parent.add_child(root)
-	_ground(root)
-	_stripes(root)
+	_ground(root, LookProfile.pitch_color(look, "surround", Color(0.11, 0.2, 0.1)))
+	_stripes(root, LookProfile.pitch_color(look, "stripe_light", Color(0.19, 0.4, 0.15)),
+		LookProfile.pitch_color(look, "stripe_dark", Color(0.16, 0.35, 0.13)))
 	_lines(root)
 	for side: float in [-1.0, 1.0]:
 		_goal(root, side)
 	return root
 
 
-static func _ground(root: Node3D) -> void:
+static func _ground(root: Node3D, surround_color: Color) -> void:
 	var body := StaticBody3D.new()
 	body.name = "Ground"
 	body.collision_layer = LAYER_WORLD
@@ -49,15 +50,15 @@ static func _ground(root: Node3D) -> void:
 	plane.size = Vector2(600.0, 400.0)
 	surround.mesh = plane
 	surround.position.y = -0.01
-	surround.material_override = _mat(Color(0.11, 0.2, 0.1))
+	surround.material_override = _mat(surround_color)
 	root.add_child(surround)
 
 
-static func _stripes(root: Node3D) -> void:
+static func _stripes(root: Node3D, light_color: Color, dark_color: Color) -> void:
 	var count := 14
 	var w := HALF_LENGTH * 2.0 / count
-	var light := _mat(Color(0.19, 0.4, 0.15))
-	var dark := _mat(Color(0.16, 0.35, 0.13))
+	var light := _mat(light_color)
+	var dark := _mat(dark_color)
 	for i in count:
 		var stripe := MeshInstance3D.new()
 		var plane := PlaneMesh.new()

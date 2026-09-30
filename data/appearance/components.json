@@ -1,0 +1,28 @@
+{
+  "_doc": "Biblioteca de componentes del PLAYER_MASTER. Cada receta (data/appearance/player_XXX.json) elige un índice de cada categoría. Las medidas son multiplicadores sobre el cuerpo base de 1.80 m.",
+  "body_types": [
+    { "id": "body_01", "name": "delgado",  "shoulders": 0.92, "chest": 0.9,  "waist": 0.9,  "limbs": 0.9 },
+    { "id": "body_02", "name": "atlético", "shoulders": 1.0,  "chest": 1.0,  "waist": 1.0,  "limbs": 1.0 },
+    { "id": "body_03", "name": "fuerte",   "shoulders": 1.1,  "chest": 1.12, "waist": 1.08, "limbs": 1.12 }
+  ],
+  "faces": [
+    { "id": "face_01", "jaw": 1.0,  "cheeks": 1.0,  "nose": 1.0,  "brow": 1.0 },
+    { "id": "face_02", "jaw": 1.08, "cheeks": 0.95, "nose": 1.2,  "brow": 1.1 },
+    { "id": "face_03", "jaw": 0.94, "cheeks": 1.05, "nose": 0.9,  "brow": 0.9 }
+  ],
+  "hair_styles": [
+    { "id": "hair_00", "name": "pelado" },
+    { "id": "hair_01", "name": "corto" },
+    { "id": "hair_02", "name": "rapado" },
+    { "id": "hair_03", "name": "largo" },
+    { "id": "hair_04", "name": "afro" },
+    { "id": "hair_05", "name": "cresta" }
+  ],
+  "boots": [
+    { "id": "boot_01", "length": 1.0,  "height": 1.0 },
+    { "id": "boot_02", "length": 1.04, "height": 0.9 },
+    { "id": "boot_03", "length": 0.98, "height": 1.15 }
+  ],
+  "skin_tones": ["#f1c9a5", "#e0ac86", "#c68a62", "#a86b45", "#7d4a2d", "#5a3420"],
+  "hair_colors": ["#1b1410", "#3b2415", "#6b4423", "#b98a4e", "#d9c089", "#8a8a8a"]
+}

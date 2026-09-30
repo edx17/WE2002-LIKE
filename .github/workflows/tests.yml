@@ -18,5 +18,11 @@ jobs:
           mv "Godot_v${GODOT_VERSION}_linux.x86_64" godot
       - name: Importar proyecto
         run: ./godot --headless --import --path .
+      - name: Kits al día con data/kits
+        run: |
+          python3 tools/asset_pipeline/kit_generator.py
+          git diff --exit-code assets/kits
       - name: Tests
         run: ./godot --headless --path . -s tests/test_runner.gd
+      - name: Sonda de comportamiento vs. WE2002
+        run: ./godot --headless --path . -s tests/behavior_probe.gd

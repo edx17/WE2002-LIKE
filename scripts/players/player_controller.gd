@@ -18,15 +18,18 @@ const GRAVITY := 9.81
 const DECELERATION := 22.0
 ## Hard turns above this angle at speed trigger the TURN state (brake + pivot).
 const HARD_TURN_DEG := 110.0
-const PASS_WINDUP := 0.09
-const SHOT_WINDUP := 0.15
 const FOLLOW_THROUGH := 0.12
-const TACKLE_TIME := 0.45
-const TACKLE_FAIL_TIME := 0.7
-const SLIDE_TIME := 0.8
-const FALL_TIME := 0.7
-const GET_UP_TIME := 0.45
+const TACKLE_FAIL_EXTRA := 0.25
 const ONE_TOUCH_WINDOW := 0.7
+
+# Timings shared with the animation clips (data/animation/clips.json).
+static var PASS_WINDUP := AnimationTimings.contact("PASS", 0.09)
+static var SHOT_WINDUP := AnimationTimings.contact("SHOOT", 0.15)
+static var TACKLE_CONTACT := AnimationTimings.contact("TACKLE", 0.12)
+static var TACKLE_TIME := AnimationTimings.length("TACKLE", 0.45)
+static var SLIDE_TIME := AnimationTimings.length("SLIDE", 0.8)
+static var FALL_TIME := AnimationTimings.length("FALL", 0.7)
+static var GET_UP_TIME := AnimationTimings.length("GET_UP", 0.45)
 
 var stats: PlayerStats = PlayerStats.new()
 var team := 0
@@ -378,12 +381,12 @@ func _update_tackle(delta: float) -> void:
 		var to_ball := DirectionResolver.flat(ball.global_position - global_position)
 		if to_ball.length() > 0.2:
 			facing = DirectionResolver.rotate_towards(facing, to_ball.normalized(), turn_rate() * delta)
-	if not _action_resolved and state_time >= 0.12:
+	if not _action_resolved and state_time >= TACKLE_CONTACT:
 		_action_resolved = true
 		var won := match_ctx.referee.resolve_tackle(self) if match_ctx else false
 		_kick = {"won": won}
 	speed = move_toward(speed, jog_speed() * 0.5, 16.0 * delta)
-	var duration := TACKLE_TIME if _kick.get("won", false) else TACKLE_FAIL_TIME
+	var duration := TACKLE_TIME if _kick.get("won", false) else TACKLE_TIME + TACKLE_FAIL_EXTRA
 	if state_time >= duration:
 		_kick.clear()
 		_set_state(_locomotion_state())

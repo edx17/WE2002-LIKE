@@ -5,8 +5,9 @@ extends Node3D
 ## corners, goal kicks, fouls) and exposes the queries players need
 ## (targets, pressure, goals).
 
-const PLAYER_SCENE := preload("res://scenes/players/Player.tscn")
-const BALL_SCENE := preload("res://scenes/ball/Ball.tscn")
+# Loaded at runtime (not preload): Player.tscn's scripts reference this class.
+const PLAYER_SCENE_PATH := "res://scenes/players/Player.tscn"
+const BALL_SCENE_PATH := "res://scenes/ball/Ball.tscn"
 
 enum Phase { PLAYING, STOPPED }
 
@@ -50,8 +51,11 @@ func _ready() -> void:
 	var setup := DataLoader.load_match(match_id)
 	direction_steps = int(setup.get("direction_steps", 8))
 
-	PitchBuilder.build(self)
-	ball = BALL_SCENE.instantiate() as Ball
+	var look := LookProfile.load_profile(str(setup.get("look", LookProfile.DEFAULT)))
+	LookProfile.apply_to_scene(self, look)
+	LookProfile.apply_camera(camera, look)
+	PitchBuilder.build(self, look)
+	ball = (load(BALL_SCENE_PATH) as PackedScene).instantiate() as Ball
 	add_child(ball)
 	referee = PossessionReferee.new(ball)
 	referee.rng = rng
@@ -75,8 +79,13 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 	var primary := Color.html(str(colors.get("primary", "#d03030")))
 	var secondary := Color.html(str(colors.get("secondary", "#ffffff")))
 	var attack := float(entry.get("attack_dir", 1.0 if index == 0 else -1.0))
+	var kit: Dictionary = {}
+	var kit_data: Variant = DataLoader.load_json("kits/%s.json" % team.get("kit", "")) if team.has("kit") else null
+	if kit_data is Dictionary:
+		kit = kit_data
+	var player_scene := load(PLAYER_SCENE_PATH) as PackedScene
 	for pe: Dictionary in entry.get("players", []):
-		var p := PLAYER_SCENE.instantiate() as PlayerController
+		var p := player_scene.instantiate() as PlayerController
 		p.stats = DataLoader.load_player(str(pe.get("id", "")))
 		p.name = "%s_%s" % [team.get("short", "T%d" % index), p.stats.id]
 		p.team = index
@@ -88,6 +97,7 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		p.direction_steps = direction_steps
 		add_child(p)
 		p.set_colors(primary, secondary)
+		PlayerModel.attach(p, p.stats.appearance, kit)
 		p.kicked.connect(_on_kicked)
 		var control := str(pe.get("control", "ai"))
 		if control == "human" and allow_human and human == null:

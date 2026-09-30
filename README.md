@@ -16,7 +16,9 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 | **2** 5 vs 5 | IA de posicionamiento, marcaje, apoyo, transiciones | ⏳ la IA ya tiene los modos, falta formación |
 | **3** 11 vs 11 | formación, roles, táctica, presión, línea defensiva, offside, pelota parada | ⏳ |
 | **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay lateral, córner, saque de arco y falta simplificados |
-| Después | estadios, caras, camisetas, público, menús, repeticiones, Master League-like, editor | — |
+| Assets | pipeline receta JSON → Blender → GLB → Godot, PLAYER_001 con esqueleto y 13 clips, kits como textura | 🟡 sustituto funcional; falta el PLAYER_MASTER esculpido |
+| Ingeniería inversa | 20 métricas de comportamiento, sonda que mide nuestro motor, protocolo de medición | 🟡 falta medir WE2002 |
+| Después | estadios, caras, público, menús, repeticiones, Master League-like, editor | — |
 
 ## Cómo correrlo
 
@@ -73,10 +75,13 @@ GRAPHICS            scripts/match/pitch_builder.gd        (placeholder a propós
 ```
 
 ```
-scenes/   match/ players/ ball/
-scripts/  gameplay/ physics/ players/ ai/ animation/ camera/ match/
-data/     players/ teams/ matches/          ← JSON, nada hardcodeado
-tests/    test_runner.gd                    ← unitarios + simulación física headless
+scenes/   match/ players/ ball/ tools/
+scripts/  gameplay/ physics/ players/ ai/ animation/ camera/ match/ tools/
+data/     players/ teams/ matches/ appearance/ kits/ animation/ look/ reference/   ← JSON
+assets/   players/generated/*.glb  kits/*.png                                    ← generados
+tools/    asset_pipeline/ (Blender + kits)
+tests/    test_runner.gd  behavior_probe.gd
+docs/     INGENIERIA_INVERSA.md  PIPELINE_ASSETS.md
 ```
 
 ### Decisiones clave
@@ -106,12 +111,29 @@ tests/    test_runner.gd                    ← unitarios + simulación física 
   "persigue la pelota": primero elige un modo táctico (defender del lado del arco, cubrir,
   presionar, recuperar).
 - **La animación solo refleja.** `AnimationSelector` produce un descriptor
-  (`SPRINT_FORWARD + TURN_RIGHT + BALL_CONTROL`). Hoy lo consume un animador procedural
-  sobre la cápsula; cuando haya GLB con rig, basta con agregar un nodo `AnimationTree` al
-  jugador y `AnimationTreeDriver` toma el control (contrato documentado en ese archivo).
+  (`SPRINT_FORWARD + TURN_RIGHT + BALL_CONTROL`). Con un jugador generado, `PlayerModel` arma un
+  `AnimationTree` en código (Locomotion por velocidad más un estado por acción, con fundidos de
+  0.05–0.1 s) y `AnimationTreeDriver` lo conduce. Sin modelo, un animador procedural mueve la
+  cápsula.
 - **Cámara WE.** Lateral y alta, sigue la pelota a lo largo del campo con *dead zone* y un
   *lead* hacia donde ataca el poseedor. `lead_speed` controla cuánto tarda en girar al
   cambiar la posesión: ahí se juega buena parte de la sensación.
+
+## Ingeniería inversa y assets
+
+Dos objetivos separados:
+
+1. **Comportamiento.** Se mide WE2002 (velocidades, giros, patadas, cámara) con el protocolo de
+   [`docs/INGENIERIA_INVERSA.md`](docs/INGENIERIA_INVERSA.md). Los valores se cargan en
+   `data/reference/we2002_behavior.json` y `tests/behavior_probe.gd` mide lo mismo en nuestro motor.
+2. **Assets.** Se reconstruye la receta visual con assets 100 % propios:
+   [`docs/PIPELINE_ASSETS.md`](docs/PIPELINE_ASSETS.md). Una receta JSON pasa por Blender, sale un GLB
+   y Godot lo carga. La camiseta es una textura sobre el mismo modelo, y los tiempos de los clips
+   son los mismos que usa el gameplay.
+
+```bash
+godot --path . res://scenes/tools/ModelPreview.tscn    # visor de jugadores generados
+```
 
 ## Datos y modding
 
@@ -134,10 +156,12 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-46 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+52 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
-completo con la misma entrada que un humano, y 90 s de IA contra IA. Corren en CI con
+completo con la misma entrada que un humano, el modelo generado con su AnimationTree
+siguiendo al gameplay, y 90 s de IA contra IA. `tests/behavior_probe.gd` compara contra la
+referencia de WE2002. Corren en CI con
 GitHub Actions.
 
 ## Legal

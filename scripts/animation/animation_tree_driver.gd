@@ -1,36 +1,41 @@
 class_name AnimationTreeDriver
 extends RefCounted
-## Feeds the gameplay Descriptor into a real AnimationTree.
+## Feeds the gameplay Descriptor into the AnimationTree built by PlayerModel:
 ##
-## Expected tree (root = AnimationNodeStateMachine), with SHORT transitions
-## (0.05–0.1 s) so a change of direction never "asks for permission":
+##   Locomotion  BlendSpace1D by speed (IDLE / WALK / RUN / SPRINT)
+##   PASS, SHOOT, HEAD, TACKLE, SLIDE, FALL, GET_UP, TURN_180, CELEBRATE
 ##
-##   Locomotion  BlendSpace2D  x = turn (-1 right .. 1 left), y = speed 0..1
-##               (Idle / Walk / Run / Sprint + lean-left / lean-right clips)
-##   Ball        BlendSpace1D  Control / Dribble / Shield / Receive
-##   PASS, SHOOT, HEAD, TACKLE, SLIDE        (actions)
-##   FALL, GET_UP, CELEBRATE, TURN_180       (reactions)
-##
-## A player scene opts in simply by having an "AnimationTree" child.
+## Transitions are 0.05–0.1 s cross-fades, so a change of direction never
+## "asks for permission". Turning lean is added procedurally on top.
 
 var tree: AnimationTree
 var playback: AnimationNodeStateMachinePlayback
+var visual: Node3D
+var _current := &"Locomotion"
+var _last_state_time := 0.0
+var _roll := 0.0
 
 
-func _init(animation_tree: AnimationTree) -> void:
+func _init(animation_tree: AnimationTree, visual_node: Node3D) -> void:
 	tree = animation_tree
-	tree.active = true
+	visual = visual_node
 	playback = tree.get("parameters/playback") as AnimationNodeStateMachinePlayback
 
 
-func apply(d: AnimationSelector.Descriptor, _p: PlayerController, _delta: float) -> void:
-	var blend := Vector2(clampf(d.turn_deg / 45.0, -1.0, 1.0), d.speed_blend)
-	var target := d.action
-	if target == "":
-		target = "Ball" if d.ball != "" else "Locomotion"
-	if target == "Ball":
-		tree.set("parameters/Ball/blend_position", d.speed_blend)
-	else:
-		tree.set("parameters/Locomotion/blend_position", blend)
-	if playback != null and playback.get_current_node() != StringName(target):
-		playback.travel(target)
+func apply(d: AnimationSelector.Descriptor, _p: PlayerController, delta: float) -> void:
+	tree.set("parameters/Locomotion/blend_position", d.speed_blend)
+	var target := StringName(d.action) if d.action != "" else &"Locomotion"
+	if not tree.tree_root.has_node(target):
+		target = &"Locomotion"
+	if playback != null:
+		if target != _current:
+			playback.travel(target)
+		elif target != &"Locomotion" and d.state_time < _last_state_time:
+			playback.start(target)  # same action again (pass after pass)
+	_current = target
+	_last_state_time = d.state_time
+
+	var roll := deg_to_rad(clampf(d.turn_deg, -60.0, 60.0) * 0.2) * d.speed_blend
+	_roll = lerpf(_roll, roll, 1.0 - exp(-14.0 * delta))
+	visual.rotation = Vector3(0.0, 0.0, _roll)
+	visual.position.y = 0.0

@@ -1,0 +1,41 @@
+{
+  "_doc": "Perfil visual: 'juego moderno con dirección artística retro'. La cámara es parte del asset: sus parámetros viven acá junto a la luz. Calibrar contra capturas de referencia (docs/INGENIERIA_INVERSA.md).",
+  "environment": {
+    "background": "sky",
+    "sky_top": "#4f7fc4",
+    "sky_horizon": "#b5c7d8",
+    "ambient_energy": 0.55,
+    "tonemap": "filmic",
+    "exposure": 1.0,
+    "white": 6.0,
+    "ssao": true,
+    "ssao_radius": 1.2,
+    "ssao_intensity": 1.6,
+    "adjustments": true,
+    "brightness": 1.0,
+    "contrast": 1.1,
+    "saturation": 1.08
+  },
+  "sun": {
+    "color": "#fff1dc",
+    "energy": 1.35,
+    "pitch_deg": -52,
+    "yaw_deg": -35,
+    "shadow_opacity": 0.8,
+    "shadow_max_distance": 120
+  },
+  "camera": {
+    "fov": 42,
+    "height": 18,
+    "distance": 30,
+    "lead": 7,
+    "lead_speed": 1.8,
+    "follow_speed": 3.0,
+    "dead_zone": 1.5
+  },
+  "pitch": {
+    "stripe_light": "#316626",
+    "stripe_dark": "#295921",
+    "surround": "#1c3319"
+  }
+}

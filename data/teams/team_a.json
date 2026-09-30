@@ -1,5 +1,9 @@
 {
   "name": "Club Atlético Prototipo",
   "short": "CAP",
-  "colors": { "primary": "#c62828", "secondary": "#ffffff" }
+  "colors": {
+    "primary": "#c62828",
+    "secondary": "#ffffff"
+  },
+  "kit": "team_a_home"
 }
