@@ -1,28 +1,38 @@
 class_name HumanInput
 extends RefCounted
-## Pad/keyboard -> PlayerIntent. Kick buttons work like the classic power
-## bar: hold to charge, release to execute.
+## Pad/keyboard -> PlayerIntent for one human (prefix "p1_" or "p2_", see
+## InputSetup). Kick buttons work like the classic power bar: hold to
+## charge, release to execute.
 
 const ACTIONS := {
-	PlayerIntent.Action.PASS: &"pass",
-	PlayerIntent.Action.SHOOT: &"shoot",
-	PlayerIntent.Action.THROUGH: &"through",
-	PlayerIntent.Action.LOB: &"lob",
+	PlayerIntent.Action.PASS: "pass",
+	PlayerIntent.Action.SHOOT: "shoot",
+	PlayerIntent.Action.THROUGH: "through",
+	PlayerIntent.Action.LOB: "lob",
 }
 ## Seconds to fill the bar.
 const CHARGE_TIME := 0.9
 
+var prefix := "p1_"
 var _hold_time := {}
+
+
+func _init(action_prefix := "p1_") -> void:
+	prefix = action_prefix
+
+
+func act(name: String) -> StringName:
+	return StringName(prefix + name)
 
 
 func fill(intent: PlayerIntent, _player: Node, delta: float) -> void:
 	intent.begin_frame()
-	intent.move = Input.get_vector(&"move_left", &"move_right", &"move_up", &"move_down")
-	intent.sprint = Input.is_action_pressed(&"sprint")
+	intent.move = Input.get_vector(act("move_left"), act("move_right"), act("move_up"), act("move_down"))
+	intent.sprint = Input.is_action_pressed(act("sprint"))
 	intent.charging_action = PlayerIntent.NONE
 	intent.charge = 0.0
 	for action: int in ACTIONS:
-		var name: StringName = ACTIONS[action]
+		var name := act(ACTIONS[action])
 		if Input.is_action_just_pressed(name):
 			intent.press(action)
 			_hold_time[action] = 0.0

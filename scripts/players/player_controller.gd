@@ -544,5 +544,11 @@ func set_colors(primary: Color, secondary: Color) -> void:
 	($Visual/Shorts as MeshInstance3D).material_override = shorts
 
 
-func set_human(is_human: bool) -> void:
-	($Visual/Cursor as Node3D).visible = is_human
+func set_human(is_human: bool, cursor_color := Color(1.0, 0.85, 0.1)) -> void:
+	var cursor := $Visual/Cursor as MeshInstance3D
+	cursor.visible = is_human
+	if is_human:
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_color = cursor_color
+		cursor.material_override = m

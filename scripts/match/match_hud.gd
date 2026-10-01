@@ -6,12 +6,10 @@ extends CanvasLayer
 var match_ctx: MatchController
 var _score: Label
 var _message: Label
-var _bar_bg: ColorRect
-var _bar_fill: ColorRect
-var _bar_label: Label
+## One name bar + power bar per human: [{name, bar_bg, bar_fill, bar_label}].
+var _pad_ui: Array[Dictionary] = []
 var _debug: Label
 var _help: Label
-var _name_bar: Label
 var _card_panel: ColorRect
 var _card_label: Label
 var _card_time := 0.0
@@ -21,6 +19,7 @@ const BAR_WIDTH := 260.0
 const ACTION_NAMES := ["PASE", "REMATE", "FILTRADO", "GLOBO/CENTRO"]
 const HELP := """MOVER  WASD / flechas / stick      SPRINT  Shift / Espacio / RB
 PASE  J / A      REMATE  K / X      FILTRADO  I / Y      GLOBO  L / B      CAMBIAR JUGADOR  Q / LB
+2P: flechas · PASE num1 · REMATE num2 · FILTRADO num5 · GLOBO num3 · SPRINT num0 · CAMBIO num4
 Mantener = cargar potencia · soltar = patear · sin pelota = acción de primera
 DEFENDER: mantener PASE = presionar · tocar PASE = quite · REMATE = barrida
 T táctica (equilibrado / presión alta / repliegue) · F2 8/16 direcciones · C zoom · F3 debug · R reiniciar · F1 ayuda"""
@@ -45,19 +44,8 @@ func setup(m: MatchController) -> void:
 	_help.text = HELP
 	_help.visible = false
 
-	# WE-style bar under the action: position, number, name of the controlled player.
-	_name_bar = _label(22, HORIZONTAL_ALIGNMENT_CENTER)
-	_name_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	_name_bar.offset_left = -260
-	_name_bar.offset_right = 260
-	_name_bar.offset_top = -48
-	_name_bar.offset_bottom = -14
-	var bar_bg := StyleBoxFlat.new()
-	bar_bg.bg_color = Color(0.12, 0.12, 0.14, 0.82)
-	bar_bg.set_corner_radius_all(14)
-	bar_bg.border_color = Color(0.7, 0.7, 0.72)
-	bar_bg.set_border_width_all(2)
-	_name_bar.add_theme_stylebox_override(&"normal", bar_bg)
+	for i in 2:
+		_pad_ui.append(_make_pad_ui(i))
 
 	# Card shown by the referee: coloured card + player.
 	_card_panel = ColorRect.new()
@@ -76,20 +64,44 @@ func setup(m: MatchController) -> void:
 	_card_label.offset_right = 300
 	_card_label.visible = false
 
-	_bar_bg = ColorRect.new()
-	_bar_bg.color = Color(0, 0, 0, 0.6)
-	_bar_bg.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_bar_bg.offset_left = -BAR_WIDTH - 24
-	_bar_bg.offset_right = -24
-	_bar_bg.offset_top = -40
-	_bar_bg.offset_bottom = -24
-	add_child(_bar_bg)
-	_bar_fill = ColorRect.new()
-	_bar_fill.color = Color(0.95, 0.8, 0.1)
-	_bar_fill.size = Vector2(0, 16)
-	_bar_bg.add_child(_bar_fill)
-	_bar_label = _label(14, HORIZONTAL_ALIGNMENT_LEFT, _bar_bg)
-	_bar_label.position = Vector2(0, -22)
+
+
+
+## WE-style bar under the action (position, number, name of the controlled
+## player) and the power bar, for human `i` in his cursor colour.
+func _make_pad_ui(i: int) -> Dictionary:
+	var name := _label(22, HORIZONTAL_ALIGNMENT_CENTER)
+	name.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	name.offset_top = -48
+	name.offset_bottom = -14
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.12, 0.12, 0.14, 0.82)
+	style.set_corner_radius_all(14)
+	style.border_color = HumanPad.COLORS[i]
+	style.set_border_width_all(2)
+	name.add_theme_stylebox_override(&"normal", style)
+	var bar_bg := ColorRect.new()
+	bar_bg.color = Color(0, 0, 0, 0.6)
+	bar_bg.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	bar_bg.offset_top = -78
+	bar_bg.offset_bottom = -62
+	add_child(bar_bg)
+	var fill := ColorRect.new()
+	fill.size = Vector2(0, 16)
+	bar_bg.add_child(fill)
+	var bar_label := _label(14, HORIZONTAL_ALIGNMENT_LEFT, bar_bg)
+	bar_label.position = Vector2(0, -22)
+	return {"name": name, "bar_bg": bar_bg, "bar_fill": fill, "bar_label": bar_label}
+
+
+func _layout_pad_ui(i: int, count: int) -> void:
+	# One human: centred. Two: P1 left, P2 right.
+	var centre := 0.0 if count == 1 else (-330.0 if i == 0 else 330.0)
+	var ui := _pad_ui[i]
+	(ui.name as Label).offset_left = centre - 250
+	(ui.name as Label).offset_right = centre + 250
+	(ui.bar_bg as ColorRect).offset_left = centre - BAR_WIDTH * 0.5
+	(ui.bar_bg as ColorRect).offset_right = centre + BAR_WIDTH * 0.5
 
 
 func _label(size: int, align: HorizontalAlignment, parent: Node = null) -> Label:
@@ -136,21 +148,28 @@ func _process(delta: float) -> void:
 	_card_panel.visible = _card_time > 0.0
 	_card_label.visible = _card_time > 0.0
 
+	var pads := match_ctx.pads
+	for i in _pad_ui.size():
+		var ui := _pad_ui[i]
+		var pad: HumanPad = pads[i] if i < pads.size() else null
+		var pl: PlayerController = pad.player if pad != null else null
+		(ui.name as Label).visible = pl != null
+		(ui.bar_bg as ColorRect).visible = false
+		if pl == null:
+			continue
+		_layout_pad_ui(i, pads.size())
+		(ui.name as Label).text = "%s  %s   %d   %s" % [pad.label if pads.size() > 1 else "", pl.role, pl.stats.number, pl.stats.name]
+		var charging := pl.intent.charging_action
+		if charging != PlayerIntent.NONE:
+			(ui.bar_bg as ColorRect).visible = true
+			(ui.bar_fill as ColorRect).size.x = BAR_WIDTH * pl.intent.charge
+			(ui.bar_fill as ColorRect).color = Color(0.95, 0.25, 0.1) if pl.intent.charge > 0.88 and charging == PlayerIntent.Action.SHOOT else pad.color
+			(ui.bar_label as Label).text = ACTION_NAMES[charging]
+
 	var h := match_ctx.human
-	_name_bar.visible = h != null
-	if h != null:
-		_name_bar.text = "%s   %d   %s" % [h.role, h.stats.number, h.stats.name]
 	if h == null:
-		_bar_bg.visible = false
 		_debug.text = ""
 		return
-	var charging := h.intent.charging_action
-	_bar_bg.visible = charging != PlayerIntent.NONE
-	if _bar_bg.visible:
-		_bar_fill.size.x = BAR_WIDTH * h.intent.charge
-		_bar_fill.color = Color(0.95, 0.25, 0.1) if h.intent.charge > 0.88 and charging == PlayerIntent.Action.SHOOT else Color(0.95, 0.8, 0.1)
-		_bar_label.text = ACTION_NAMES[charging]
-
 	if _debug.visible:
 		var ai_lines := ""
 		for p in match_ctx.players:

@@ -53,6 +53,7 @@ func _run() -> void:
 	await _test_throw_in()
 	await _test_substitutions()
 	await _test_referee_and_menu()
+	await _test_two_players()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -745,5 +746,60 @@ func _test_referee_and_menu() -> void:
 	hm.pause_menu.close()
 	check(not paused, "y al cerrarlo sigue")
 	hm.queue_free()
+	await _frames(1)
+
+
+func _test_two_players() -> void:
+	print("Dos jugadores locales")
+	var m := MATCH_SCENE.instantiate() as MatchController
+	m.match_id = "stage4_partido"
+	root.add_child(m)
+	await _frames(2)
+	m.set_player_mode("vs")
+	check(m.pads.size() == 2 and m.pads[0].player.team == 0 and m.pads[1].player.team == 1
+		and (m.pads[1].player.input_source as HumanInput).prefix == "p2_",
+		"versus: 1P con el local, 2P con el visitante, cada uno con su control")
+	m.set_player_mode("coop")
+	var p1 := m.pads[0]
+	var p2 := m.pads[1]
+	check(p1.team == 0 and p2.team == 0 and p1.player != p2.player and p1.player != null and p2.player != null,
+		"cooperativo: los dos en el mismo equipo, cada uno con un jugador distinto")
+	for i in 5:
+		m.switch_to_nearest(p2)
+		if p2.player == p1.player:
+			break
+	check(p2.player != p1.player, "cambiar de jugador nunca le quita el suyo al compañero")
+	check(p1.player.get_node("Visual/Cursor").material_override.albedo_color != p2.player.get_node("Visual/Cursor").material_override.albedo_color,
+		"cada humano tiene su color de cursor")
+	# A pass from 2P hands 2P the receiver; 1P keeps his player.
+	var p1_player := p1.player
+	var passer := p2.player
+	var mate: PlayerController = null
+	for o in m.players:
+		if o.team == 0 and not o.is_keeper and o != p1.player and o != passer:
+			mate = o
+			break
+	m.rng.seed = 5
+	for o in m.players:
+		if o != passer:
+			o.input_source = null if o != p1_player else o.input_source
+			if o != p1_player:
+				o.teleport(Vector3(o.global_position.x, 0, 25.0 if o.team == 1 else -25.0), Vector3.RIGHT)
+	p1_player.teleport(Vector3(-20, 0, 20), Vector3.RIGHT)
+	passer.teleport(Vector3(-5, 0, 0), Vector3.RIGHT)
+	mate.teleport(Vector3(8, 0, 0), Vector3.LEFT)
+	m.ball.place(Vector3(-4.45, Ball.RADIUS, 0))
+	var input := ScriptedInput.new()
+	passer.input_source = input
+	p2.input = HumanInput.new("p2_")  # keep a real pad object for the hand-over
+	await _frames(20)
+	input.move = Vector2.RIGHT
+	input.charge = 0.4
+	input.release = PlayerIntent.Action.PASS
+	await _frames(40)
+	check(p2.player == mate and p1.player == p1_player, "en cooperativo el pase le da el receptor a quien pasó")
+	m.set_player_mode("1")
+	check(m.pads.size() == 1 and not InputSetup.is_two_players(), "volver a 1 jugador")
+	m.queue_free()
 	await _frames(1)
 

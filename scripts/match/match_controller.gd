@@ -28,7 +28,13 @@ var referee: PossessionReferee
 var rng := RandomNumberGenerator.new()
 var score := [0, 0]
 var team_data: Array[Dictionary] = [{}, {}]
+## Player driven by the first human (kept in sync with pads[0]; HUD, tests).
 var human: PlayerController = null
+## Humans at the console (0, 1 or 2): versus or co-op.
+var pads: Array[HumanPad] = []
+## "1", "vs" (P1 home, P2 away) or "coop" (both home).
+var player_mode := "1"
+var _last_kicker: PlayerController = null
 var phase: int = Phase.PLAYING
 ## Game time in minutes (0..90), driven by real seconds via half_seconds.
 var clock := 0.0
@@ -53,6 +59,7 @@ var subs_used := [0, 0]
 var max_substitutions := 3
 var queued_subs: Array[Dictionary] = []
 var _team_kits: Array = [{}, {}]
+var _preferred_starter := {}
 ## The match official on the pitch (not in `players`: never plays the ball).
 var official: PlayerController = null
 ## Advantage being played: {foul, team, time}.
@@ -82,6 +89,8 @@ func _ready() -> void:
 			match_id = arg.trim_prefix("--match=")
 		elif arg == "--attract":
 			allow_human = false
+		elif arg.begins_with("--players="):
+			player_mode = arg.trim_prefix("--players=")
 		elif arg.begins_with("--zoom="):
 			camera.zoom_index = clampi(int(arg.trim_prefix("--zoom=")), 0, camera.zoom_levels.size() - 1)
 	var setup := DataLoader.load_match(match_id)
@@ -111,6 +120,10 @@ func _ready() -> void:
 	for t in teams.size():
 		_spawn_team(t, teams[t])
 	referee.players = players
+	if setup.has("players") and not "--players=" in " ".join(OS.get_cmdline_user_args()):
+		player_mode = str(setup.players)
+	if allow_human:
+		set_player_mode(player_mode)
 	if bool(setup.get("referee", true)) and brains[0] != null:
 		_spawn_official()
 
@@ -154,12 +167,11 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		var pe: Dictionary = entries[slot]
 		var p := _create_player(index, str(pe.get("id", "")), slot, str(pe.get("role", "")))
 		var control := str(pe.get("control", "ai"))
-		if control == "human" and allow_human and human == null:
-			p.input_source = HumanInput.new()
-			human = p
-		elif control != "none":
+		if control == "human":
+			_preferred_starter[index] = p
+		if control != "none":
 			p.input_source = p.ai
-		p.set_human(p == human)
+		p.set_human(false)
 		var home: Array = pe.get("home", [])
 		if brain == null and home.size() == 2:
 			p.home_position = Vector3(float(home[0]), 0.0, float(home[1]))
@@ -225,18 +237,16 @@ func substitute(out: PlayerController, in_id: String) -> PlayerController:
 	var slot := brain.slot_of(out)
 	var pos := out.global_position
 	var face := out.facing
-	var was_human := out == human
+	var pad := pad_of(out)
 	_remove_from_play(out)
 	bench[team].erase(in_id)
 	var p := _create_player(team, in_id, slot)
 	p.teleport(pos, face)
 	p.frozen = phase != Phase.PLAYING
-	if was_human:
-		human = p
-		p.input_source = out.input_source
-		p.set_human(true)
-	else:
-		p.input_source = p.ai
+	p.input_source = p.ai
+	if pad != null:
+		pad.player = null
+		give_pad(pad, p)
 	subs_used[team] += 1
 	stats["subs"] = int(stats.get("subs", 0)) + 1
 	hud.flash("CAMBIO: SALE %s · ENTRA %s" % [out.stats.name.to_upper(), p.stats.name.to_upper()], 2.0, false)
@@ -249,7 +259,7 @@ func _apply_substitutions() -> void:
 		substitute(q.out, q.in_id)
 	queued_subs.clear()
 	for team in 2:
-		if human != null and human.team == team:
+		if pad_for_team(team) != null:
 			continue
 		_ai_coach(team)
 
@@ -360,27 +370,33 @@ func _physics_process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(&"toggle_directions"):
 		set_direction_steps(16 if direction_steps == 8 else 8)
-	elif event.is_action_pressed(&"switch_player"):
-		switch_to_nearest()
-	elif event.is_action_pressed(&"cycle_tactics"):
-		cycle_tactics()
 	elif event.is_action_pressed(&"camera_zoom"):
 		camera.cycle_zoom()
 	elif event.is_action_pressed(&"reset_match"):
 		restart_match()
+	else:
+		for pad in pads:
+			if event.is_action_pressed(pad.action("switch_player")):
+				switch_to_nearest(pad)
+			elif event.is_action_pressed(pad.action("cycle_tactics")):
+				cycle_tactics(pad.team)
 
 
 ## In-match strategy change for the human's team (T), like WE's quick tactics.
 const TACTICS_CYCLE := ["equilibrado", "presion_alta", "repliegue"]
 
-func cycle_tactics() -> void:
-	if human == null or brain_for(human.team) == null:
+func cycle_tactics(team := -1) -> void:
+	if team < 0:
+		if pads.is_empty():
+			return
+		team = pads[0].team
+	var brain := brain_for(team)
+	if brain == null:
 		return
-	var brain := brain_for(human.team)
 	var i := TACTICS_CYCLE.find(_tactics_id(brain))
 	var next_id: String = TACTICS_CYCLE[(i + 1) % TACTICS_CYCLE.size()]
 	brain.tactics = TeamTactics.load_id(next_id)
-	hud.flash("TÁCTICA: %s" % brain.tactics.name.to_upper(), 1.2, false)
+	hud.flash("%s TÁCTICA: %s" % [team_data[team].get("short", ""), brain.tactics.name.to_upper()], 1.2, false)
 
 
 func _tactics_id(brain: TeamBrain) -> String:
@@ -554,10 +570,12 @@ func _book(p: PlayerController, card: String) -> void:
 
 ## Red card: the player leaves; his team plays one short.
 func send_off(p: PlayerController) -> void:
-	if p == human:
-		switch_to_nearest()
-		if p == human:  # nobody to switch to
-			human = null
+	var pad := pad_of(p)
+	if pad != null:
+		switch_to_nearest(pad)
+		if pad.player == p:  # nobody to switch to
+			pad.player = null
+			_sync_human()
 	_remove_from_play(p)
 	sent_off.append(p)
 
@@ -645,8 +663,6 @@ func _kickoff_taker(team: int) -> PlayerController:
 			continue
 		if best == null or p.home_position.x * p.attack_dir > best.home_position.x * best.attack_dir:
 			best = p
-	if best == null and human != null and human.team == team:
-		return human
 	return best
 
 
@@ -673,37 +689,102 @@ func _restart_taker(team: int, pos: Vector3, kind: String) -> PlayerController:
 
 # --- human control ----------------------------------------------------------------
 
-## Moves the pad to another player of the human's team (never the keeper).
+## Sets up the humans: "1" (P1 home), "vs" (P1 home, P2 away), "coop" (both home).
+func set_player_mode(mode: String) -> void:
+	for pad in pads:
+		if pad.player != null:
+			pad.player.input_source = pad.player.ai
+			pad.player.set_human(false)
+	pads.clear()
+	player_mode = mode
+	InputSetup.configure(mode == "vs" or mode == "coop")
+	var teams: Array[int] = [0]
+	if mode == "vs":
+		teams = [0, 1]
+	elif mode == "coop":
+		teams = [0, 0]
+	for i in teams.size():
+		var pad := HumanPad.new(i, teams[i])
+		pads.append(pad)
+		var start: PlayerController = _preferred_starter.get(pad.team)
+		if start == null or pad_of(start) != null or not (start in players):
+			start = _free_player_near(pad.team, ball.global_position if ball else Vector3.ZERO)
+		give_pad(pad, start)
+	_sync_human()
+
+
+func pad_of(p: PlayerController) -> HumanPad:
+	for pad in pads:
+		if pad.player == p and p != null:
+			return pad
+	return null
+
+
+func pad_for_team(team: int) -> HumanPad:
+	for pad in pads:
+		if pad.team == team:
+			return pad
+	return null
+
+
+## Gives a human control of `p` (never the keeper, never someone the other
+## human is driving). The previous player goes back to his AI.
+func give_pad(pad: HumanPad, p: PlayerController) -> void:
+	if pad == null or p == null or p == pad.player or p.team != pad.team or p.is_keeper:
+		return
+	if pad_of(p) != null or not (p in players):
+		return
+	if pad.player != null:
+		pad.player.input_source = pad.player.ai
+		pad.player.set_human(false)
+	pad.player = p
+	p.input_source = pad.input
+	p.set_human(true, pad.color)
+	_sync_human()
+
+
+## Compatibility: give `p` to a human of his team (the first one).
 func set_human(p: PlayerController) -> void:
-	if human == null or p == null or p == human or p.team != human.team or p.is_keeper:
+	if p == null:
 		return
-	var pad := human.input_source
-	human.input_source = human.ai
-	human.set_human(false)
-	human = p
-	human.input_source = pad
-	human.set_human(true)
+	give_pad(pad_for_team(p.team), p)
 
 
+func _sync_human() -> void:
+	human = pads[0].player if not pads.is_empty() else null
+
+
+## Restarts: the taker goes to a human of that team (the closest one in co-op).
 func _give_control(p: PlayerController) -> void:
-	if human != null and p.team == human.team:
-		set_human(p)
-
-
-## Manual switch (Q / LB): the team-mate closest to the ball.
-func switch_to_nearest() -> void:
-	if human == null:
-		return
-	var best: PlayerController = null
-	for p in teammates_of(human):
-		if p.is_keeper:
+	var best: HumanPad = null
+	for pad in pads:
+		if pad.team != p.team:
 			continue
-		if best == null or p.global_position.distance_to(ball.global_position) < best.global_position.distance_to(ball.global_position):
+		if best == null or (pad.player != null and best.player != null
+				and pad.player.global_position.distance_to(p.global_position) < best.player.global_position.distance_to(p.global_position)):
+			best = pad
+	if best != null and pad_of(p) == null:
+		give_pad(best, p)
+
+
+## Manual switch (Q / LB): the free team-mate closest to the ball.
+func switch_to_nearest(pad: HumanPad = null) -> void:
+	if pad == null:
+		if pads.is_empty():
+			return
+		pad = pads[0]
+	give_pad(pad, _free_player_near(pad.team, ball.global_position, pad.player))
+
+
+func _free_player_near(team: int, pos: Vector3, exclude: PlayerController = null) -> PlayerController:
+	var best: PlayerController = null
+	for p in players:
+		if p.team != team or p.is_keeper or p == exclude or pad_of(p) != null:
+			continue
+		if best == null or p.global_position.distance_to(pos) < best.global_position.distance_to(pos):
 			best = p
-	set_human(best)
+	return best
 
-
-# --- queries used by players and AI --------------------------------------------
 
 func brain_for(team: int) -> TeamBrain:
 	return brains[team] as TeamBrain
@@ -829,10 +910,12 @@ func _on_kicked(p: PlayerController, type: int, result: KickSolver.KickResult) -
 		_pending_pass = p
 	pass_receiver = _last_receiver if type != KickSolver.KickType.SHOT and _last_receiver != null \
 		and _last_receiver.team == p.team else null
+	_last_kicker = p
 	# WE: control follows the pass to its receiver.
-	if p == human and type != KickSolver.KickType.SHOT and _last_receiver != null and _last_receiver.team == p.team:
-		set_human(_last_receiver)
-	if result.mishit and p == human:
+	var pad := pad_of(p)
+	if pad != null and type != KickSolver.KickType.SHOT and _last_receiver != null and _last_receiver.team == p.team:
+		give_pad(pad, _last_receiver)
+	if result.mishit and pad != null:
 		hud.flash("¡LE PEGÓ MAL!", 0.8, false)
 
 
@@ -846,8 +929,12 @@ func on_ball_received(p: PlayerController, zone: int, quality: float) -> void:
 		if _pending_pass.team == p.team and _pending_pass != p:
 			stats.passes_completed += 1
 		_pending_pass = null
-	# A team-mate controls the ball: the pad goes to him.
-	if human != null and p.team == human.team and p != human and not p.is_keeper:
-		set_human(p)
-	if p == human and quality < 0.5:
+	# A team-mate controls the ball: the pad of whoever passed it (or the
+	# team's first human) takes him.
+	if pad_of(p) == null and not p.is_keeper:
+		var pad := pad_of(_last_kicker) if _last_kicker != null and _last_kicker.team == p.team else null
+		if pad == null:
+			pad = pad_for_team(p.team)
+		give_pad(pad, p)
+	if pad_of(p) != null and quality < 0.5:
 		hud.flash("CONTROL CON %s… DEFECTUOSO" % BallInteraction.ZONE_NAMES[zone], 0.7, false)

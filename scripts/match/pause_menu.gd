@@ -15,6 +15,10 @@ var _items: Array[Dictionary] = []
 var _index := 0
 var _screen := "main"
 var _sub_out: PlayerController = null
+## The human who opened the menu (substitutions/tactics are for his team).
+var _pad: HumanPad = null
+const MODES := ["1", "vs", "coop"]
+const MODE_NAMES := {"1": "1 jugador", "vs": "2 jugadores (versus)", "coop": "2 jugadores (cooperativo)"}
 
 
 func setup(m: MatchController) -> void:
@@ -54,16 +58,17 @@ func _label(size: int) -> Label:
 	return l
 
 
-func toggle() -> void:
+func toggle(pad_index := 0) -> void:
 	if visible:
 		close()
 	else:
-		open()
+		open(pad_index)
 
 
-func open() -> void:
-	if match_ctx.human == null:
+func open(pad_index := 0) -> void:
+	if match_ctx.pads.is_empty():
 		return
+	_pad = match_ctx.pads[mini(pad_index, match_ctx.pads.size() - 1)]
 	visible = true
 	get_tree().paused = true
 	_show("main")
@@ -76,7 +81,8 @@ func close() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(&"pause_menu"):
-		toggle()
+		# Second joystick (device 1) opens the menu for player 2.
+		toggle(1 if event is InputEventJoypadButton and event.device == 1 else 0)
 		get_viewport().set_input_as_handled()
 		return
 	if not visible:
@@ -103,16 +109,21 @@ func _show(screen: String) -> void:
 	_items.clear()
 	_index = 0
 	var m := match_ctx
-	var team := m.human.team
+	var team := _pad.team
 	var brain := m.brain_for(team)
 	match screen:
 		"main":
-			_title.text = "PAUSA   %s %d - %d %s   %d'" % [m.team_data[0].get("short", ""), m.score[0], m.score[1],
+			_title.text = ("%s · " % _pad.label if m.pads.size() > 1 else "") + "PAUSA   %s %d - %d %s   %d'" % [m.team_data[0].get("short", ""), m.score[0], m.score[1],
 				m.team_data[1].get("short", ""), int(m.clock)]
 			_items.append({"text": "Reanudar", "action": close})
+			_items.append({"text": "Jugadores: %s" % MODE_NAMES[m.player_mode], "action": func() -> void:
+				var i := MODES.find(m.player_mode)
+				m.set_player_mode(MODES[(i + 1) % MODES.size()])
+				_pad = m.pads[0]
+				_show("main")})
 			if brain != null:
 				_items.append({"text": "Táctica: %s" % brain.tactics.name, "action": func() -> void:
-					m.cycle_tactics()
+					m.cycle_tactics(team)
 					_show("main")})
 				_items.append({"text": "Formación: %s" % brain.formation.name, "action": func() -> void:
 					var i := FORMATIONS.find(brain.formation.name)
