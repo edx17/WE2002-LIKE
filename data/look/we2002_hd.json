@@ -37,5 +37,8 @@
     "stripe_light": "#316626",
     "stripe_dark": "#295921",
     "surround": "#1c3319"
+  },
+  "players": {
+    "texture_filter": "nearest"
   }
 }

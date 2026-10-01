@@ -23,7 +23,8 @@ import zlib
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 KITS = os.path.join(ROOT, "data", "kits")
 OUT = os.path.join(ROOT, "assets", "kits")
-SIZE = 1024
+# Low-res on purpose: the classic look shows these pixels unfiltered.
+SIZE = 256
 
 
 def rgb(h):

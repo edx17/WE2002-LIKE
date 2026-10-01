@@ -51,11 +51,12 @@ static func apply_kit(model: Node, kit: Dictionary, number := 0) -> void:
 		if shirt_node != null:
 			shirt_node.visible = (shirt_name == "Shirt_Long") == long_sleeves
 	var shirt := StandardMaterial3D.new()
-	shirt.roughness = 0.82
-	shirt.metallic_specular = 0.35
+	shirt.roughness = 1.0
+	shirt.metallic_specular = 0.0
 	shirt.cull_mode = BaseMaterial3D.CULL_DISABLED  # see the inside through sleeves/hem
 	shirt.albedo_texture = KitTexture.build(kit, number)
 	shirt.texture_repeat = true
+	shirt.texture_filter = texture_filter()
 	var shorts := _cloth(Color.html(str(kit.get("shorts", "#ffffff"))))
 	var socks := _cloth(Color.html(str(kit.get("socks", kit.get("primary", "#cccccc")))))
 	for mesh_instance in model.find_children("*", "MeshInstance3D", true, false):
@@ -70,13 +71,26 @@ static func apply_kit(model: Node, kit: Dictionary, number := 0) -> void:
 					mi.set_surface_override_material(i, shorts)
 				"KIT_SOCKS":
 					mi.set_surface_override_material(i, socks)
+				"FACE":
+					# Painted face: keep the pixels crisp like the original.
+					var face := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+					face.texture_filter = texture_filter()
+					mi.set_surface_override_material(i, face)
+
+
+## Classic look: low-res textures shown unfiltered (data/look: players.texture_filter).
+static func texture_filter() -> BaseMaterial3D.TextureFilter:
+	var players: Dictionary = LookProfile.load_profile().get("players", {})
+	if str(players.get("texture_filter", "nearest")) == "nearest":
+		return BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	return BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 
 
 static func _cloth(color: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
-	m.roughness = 0.82
-	m.metallic_specular = 0.3
+	m.roughness = 1.0
+	m.metallic_specular = 0.0
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return m
 

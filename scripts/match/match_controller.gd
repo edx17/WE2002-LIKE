@@ -17,6 +17,7 @@ signal restarted(kind: String)
 ## Match setup in data/matches. Can be overridden from the command line:
 ##   godot -- --match=stage0_solo
 ##   godot -- --attract          (every player driven by AI)
+##   godot -- --zoom=0           (camera zoom level: 0 close, 1 normal, 2 wide)
 @export var match_id := "stage1_1v1"
 ## Disable to drive every player from AI/scripts (tests, attract mode).
 @export var allow_human := true
@@ -48,6 +49,8 @@ func _ready() -> void:
 			match_id = arg.trim_prefix("--match=")
 		elif arg == "--attract":
 			allow_human = false
+		elif arg.begins_with("--zoom="):
+			camera.zoom_index = clampi(int(arg.trim_prefix("--zoom=")), 0, camera.zoom_levels.size() - 1)
 	var setup := DataLoader.load_match(match_id)
 	direction_steps = int(setup.get("direction_steps", 8))
 

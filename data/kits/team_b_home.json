@@ -7,5 +7,10 @@
   "shorts": "#10204a",
   "socks": "#1e5bc6",
   "number": "#ffffff",
-  "number_outline": "#10204a"
+  "number_outline": "#10204a",
+  "crest": {
+    "primary": "#f2c200",
+    "secondary": "#ffffff",
+    "border": "#10204a"
+  }
 }

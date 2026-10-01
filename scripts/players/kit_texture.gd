@@ -44,12 +44,36 @@ static func build(kit: Dictionary, number: int) -> Texture2D:
 		var h := img.get_height()
 		# Back: centred on u = 0 (wraps around the seam), v 0.36..0.8.
 		draw_number(img, str(number), 0.0, 1.0 - 0.8, 0.44 * h, fill, outline)
-		# Chest: small, centred.
-		draw_number(img, str(number), 0.5, 1.0 - 0.83, 0.13 * h, fill, outline)
-	img.generate_mipmaps()
+		# Chest number only when the kit asks for it (most classic kits don't).
+		if bool(kit.get("front_number", false)):
+			draw_number(img, str(number), 0.5, 1.0 - 0.83, 0.13 * h, fill, outline)
+	if kit.has("crest"):
+		draw_crest(img, kit["crest"])
 	var tex := ImageTexture.create_from_image(img)
 	_cache[key] = tex
 	return tex
+
+
+## Small shield on the player's left breast (viewer's right): u ≈ 0.61.
+static func draw_crest(img: Image, crest: Dictionary) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	var cw := maxi(3, roundi(w * 0.045))
+	var ch := maxi(4, roundi(h * 0.11))
+	var x0 := roundi(w * 0.615) - cw / 2
+	var y0 := roundi(h * (1.0 - 0.86))
+	var border := Color.html(str(crest.get("border", "#202020")))
+	var a := Color.html(str(crest.get("primary", "#ffffff")))
+	var b := Color.html(str(crest.get("secondary", "#c00000")))
+	for row in ch:
+		# Shield: straight sides, tapering to a point in the lower third.
+		var inset := 0
+		if row > ch * 2 / 3:
+			inset = roundi(float(row - ch * 2 / 3) / float(ch / 3 + 1) * cw * 0.5)
+		for col in range(inset, cw - inset):
+			var edge := row == 0 or col == inset or col == cw - inset - 1 or row == ch - 1
+			var c := border if edge else (a if col < cw / 2 else b)
+			img.set_pixel(clampi(x0 + col, 0, w - 1), clampi(y0 + row, 0, h - 1), c)
 
 
 ## Draws `text` centred horizontally at u, top at v (0 = image top), `height` px tall.

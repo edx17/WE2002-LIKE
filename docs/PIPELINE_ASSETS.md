@@ -58,7 +58,32 @@ volumen. Cada jugador en `data/players/*.json` elige su receta con `"appearance"
 - **Look.** Material de pocas capas: color base, rugosidad alta y especular moderado. La luz, el
   SSAO, el grading y la **cámara** viven en `data/look/we2002_hd.json`.
 
-## Cómo se esculpe (sculpt.py)
+## Dos estilos
+
+Cada receta elige `"style"`. El valor por defecto está en `components.json`.
+
+### `classic` (por defecto): el diseño original de WE2002
+
+Mirando capturas del original, lo que define el diseño es:
+
+- **Volúmenes cuadrados.** Camiseta en trapecio con hombros anchos y rectos, short muy ancho
+  y cuadrado que deja ver las dos piernas, gemelos y muslos de sección cuadrada, rodilla al
+  aire entre short y media, manos tipo mitón, botín en cuña.
+- **Cabeza caja con la cara pintada.** Ojos, cejas, boca y barba son textura (64×64), no
+  geometría. Nariz y orejas son bloques. El pelo es un casquete cuadrado con la línea de
+  nacimiento inclinada.
+- **Pocos polígonos.** Unos 1.100 triángulos visibles por jugador.
+- **Texturas de baja resolución sin filtrar** (kits de 256², cara de 64²) y materiales mate,
+  sin brillo. El escudo va en el pecho izquierdo y el número grande en la espalda.
+
+Se construye con `classic_builder.py`. Cada parte es un *loft*: una cadena de anillos
+octogonales (rectángulos con esquinas cortadas), y cada anillo lleva sus pesos de hueso. La
+silueta queda angular y las articulaciones doblan sin abrirse. Las aristas de más de 40° se
+marcan como duras, así los planos se leen como en PS1.
+
+### `modern`: esculpido
+
+## Cómo se esculpe el estilo modern (sculpt.py)
 
 La referencia visual es la de los remasters actuales de WE2002: proporciones modernas,
 cuerpo continuo, ropa con volumen y dorsal grande en la espalda. La receta:
@@ -76,7 +101,7 @@ cuerpo continuo, ropa con volumen y dorsal grande en la espalda. La receta:
    vértice de piel más cercano, así nunca se rompe.
 5. **Cabeza aparte**, con voxel más fino, para que nariz, cejas, mandíbula y orejas no se pierdan.
 
-| Malla | Triángulos |
+| Malla (modern) | Triángulos |
 |---|---|
 | Body | ~29k |
 | Head | ~7k |
@@ -84,9 +109,11 @@ cuerpo continuo, ropa con volumen y dorsal grande en la espalda. La receta:
 | Shorts, Boots, Hair | ~3k, ~3k, ~4k |
 | Face (ojos, cejas) | ~2.5k |
 
-El kit decide manga corta o larga (`"sleeves": "long"`, por ejemplo para arqueros). El número
-del jugador se imprime en tiempo de ejecución, grande en la espalda y chico en el pecho, con
-borde, en los colores `number` / `number_outline` del kit.
+En los dos estilos, el kit decide manga corta o larga (`"sleeves": "long"`, por ejemplo para
+arqueros). El número del jugador se imprime en tiempo de ejecución, grande en la espalda con
+borde, en los colores `number` / `number_outline` del kit. Con `"front_number": true` también
+va en el pecho. `"crest"` dibuja un escudo en el pecho izquierdo. El filtrado de texturas de los
+jugadores sale del perfil visual (`data/look/*.json` → `players.texture_filter`).
 
 ## Próximos pasos
 

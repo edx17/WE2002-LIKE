@@ -16,7 +16,7 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 | **2** 5 vs 5 | IA de posicionamiento, marcaje, apoyo, transiciones | ⏳ la IA ya tiene los modos, falta formación |
 | **3** 11 vs 11 | formación, roles, táctica, presión, línea defensiva, offside, pelota parada | ⏳ |
 | **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay lateral, córner, saque de arco y falta simplificados |
-| Assets | pipeline receta JSON → Blender → GLB → Godot: cuerpo continuo (~29k tris), ropa con volumen, manga corta/larga, dorsales, 13 clips | 🟡 jugadores generados; animaciones procedurales |
+| Assets | pipeline receta JSON → Blender → GLB → Godot. Estilo **classic** (diseño WE2002: cuadrado, low-poly, cara pintada) por defecto y **modern** (esculpido) opcional. Dorsales, escudo, manga corta/larga, 13 clips | 🟡 jugadores generados; animaciones procedurales |
 | Ingeniería inversa | 20 métricas de comportamiento, sonda que mide nuestro motor, protocolo de medición | 🟡 falta medir WE2002 |
 | Después | estadios, caras, público, menús, repeticiones, Master League-like, editor | — |
 

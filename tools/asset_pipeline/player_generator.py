@@ -4,7 +4,15 @@
     python  tools/asset_pipeline/player_generator.py player_001        (with the `bpy` module)
     ... -- --all                                                        (every recipe in data/appearance)
 
-One master body is sculpted from parametric anatomy (body type, face, hair,
+Two styles, chosen per recipe ("style") with a default in components.json:
+
+  classic (default)  the original WE2002 design: boxy low-poly lofts (~2k
+                     tris), trapezoid shirt, very wide shorts, painted face,
+                     matte materials, unfiltered low-res textures
+                     (classic_builder.py)
+  modern             the sculpted look described below (sculpt.py)
+
+Modern: one master body is sculpted from parametric anatomy (body type, face, hair,
 boots, skin) over a shared skeleton, so a small library produces many
 different players (see sculpt.py):
 
@@ -39,6 +47,7 @@ from mathutils import Euler, Vector
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sculpt import (Capsule, Ellipsoid, cut, cylindrical_uv, fuse, join, nearest,  # noqa: E402
                     planar_uv, skin, transfer_weights, tris)
+import classic_builder  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA = os.path.join(ROOT, "data")
@@ -310,8 +319,9 @@ def build_face(face, s):
     return mesh
 
 
-def make_materials(recipe, lib):
-    """The 'look' recipe: flat-ish base colour, high roughness, moderate specular."""
+def make_materials(recipe, lib, classic=False):
+    """The 'look' recipe. Modern: flat-ish colour, high roughness, moderate
+    specular. Classic (WE2002): fully matte, no specular, painted face."""
     colors = {
         "SKIN": hex_color(lib["skin_tones"][recipe["skin"]]),
         "KIT_SHIRT": hex_color("#bbbbbb"),
@@ -320,16 +330,27 @@ def make_materials(recipe, lib):
         "BOOTS": hex_color(recipe.get("boot_color", "#111111")),
         "HAIR": hex_color(lib["hair_colors"][recipe["hair_color"]]),
         "EYES": hex_color("#161210"),
+        "FACE": hex_color("#ffffff"),
     }
-    roughness = {"SKIN": 0.62, "KIT_SHIRT": 0.82, "KIT_SHORTS": 0.8, "KIT_SOCKS": 0.88, "BOOTS": 0.32, "HAIR": 0.8, "EYES": 0.25}
+    roughness = {"SKIN": 0.62, "KIT_SHIRT": 0.82, "KIT_SHORTS": 0.8, "KIT_SOCKS": 0.88, "BOOTS": 0.32,
+                 "HAIR": 0.8, "EYES": 0.25, "FACE": 0.62}
     mats = {}
-    for name in MATERIALS:
+    for name in MATERIALS + ["FACE"]:
         m = bpy.data.materials.new(name)
         m.use_nodes = True
         bsdf = m.node_tree.nodes["Principled BSDF"]
         bsdf.inputs["Base Color"].default_value = colors[name]
-        bsdf.inputs["Roughness"].default_value = roughness[name]
-        bsdf.inputs["Specular IOR Level"].default_value = 0.35
+        bsdf.inputs["Roughness"].default_value = 1.0 if classic else roughness[name]
+        bsdf.inputs["Specular IOR Level"].default_value = 0.0 if classic else 0.35
+        if name == "FACE":
+            face = lib["faces"][recipe["face"]]
+            img = classic_builder.face_image(
+                f"face_{recipe['id']}", lib["skin_tones"][recipe["skin"]],
+                lib["hair_colors"][recipe["hair_color"]], face, recipe.get("facial_hair", 0))
+            tex = m.node_tree.nodes.new("ShaderNodeTexImage")
+            tex.image = img
+            tex.interpolation = "Closest"
+            m.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
         mats[name] = m
     return mats
 
@@ -503,30 +524,15 @@ def generate(recipe_id):
     clips = load_json("animation", "clips.json")
     scale = recipe["height"] / BASE_HEIGHT
 
+    style = recipe.get("style", lib.get("default_style", "classic"))
     arm = build_armature(scale)
     skeleton = {n: (Vector(h) * scale, Vector(t) * scale, p) for n, (h, t, p) in SKELETON.items()}
-    mats = make_materials(recipe, lib)
+    mats = make_materials(recipe, lib, classic=style == "classic")
     report = []
-    body_obj = None
-    for name, mesh, prims, mat_names, rigid in build_meshes(recipe, lib, scale):
-        for m in mat_names:
-            mesh.materials.append(mats[m])
-        for poly in mesh.polygons:
-            poly.use_smooth = True
-        obj = bpy.data.objects.new(name, mesh)
-        bpy.context.scene.collection.objects.link(obj)
-        obj.parent = arm
-        obj.modifiers.new("Skeleton", "ARMATURE").object = arm
-        if name == "Body":
-            skin(obj, prims, skeleton)
-            body_obj = obj
-        elif name == "Head":
-            skin(obj, prims, skeleton)
-        elif rigid:
-            skin(obj, prims, skeleton, rigid=rigid)
-        else:
-            transfer_weights(obj, body_obj, skeleton)
-        report.append(f"{name} {tris(mesh)}")
+    if style == "classic":
+        _add_classic(recipe, lib, scale, arm, mats, report)
+    else:
+        _add_modern(recipe, lib, scale, arm, skeleton, mats, report)
 
     build_actions(arm, scale, clips)
 
@@ -536,9 +542,55 @@ def generate(recipe_id):
         filepath=path, export_format="GLB", export_animations=True,
         export_animation_mode="ACTIONS", export_force_sampling=True,
         export_apply=False, export_yup=True)
-    print(f"[player_generator] {recipe_id}: {', '.join(report)} tris; {len(clips['clips'])} clips -> "
+    print(f"[player_generator] {recipe_id} ({style}): {', '.join(report)} tris; {len(clips['clips'])} clips -> "
           f"{os.path.relpath(path, ROOT)}")
     return path
+
+
+def _link(name, mesh, arm):
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.parent = arm
+    obj.modifiers.new("Skeleton", "ARMATURE").object = arm
+    return obj
+
+
+def _add_classic(recipe, lib, scale, arm, mats, report):
+    """WE2002 look: boxy low-poly lofts, weights per ring, painted face."""
+    for name, mesh, mat_names, trim in classic_builder.build(recipe, lib, scale, list(SKELETON)):
+        for m in mat_names:
+            mesh.materials.append(mats[m])
+        if name.startswith("Shirt"):
+            cylindrical_uv(mesh, 0.93 * scale, 1.5 * scale,
+                           collar=lambda co, trim=trim: any((co - t).length < 1e-4 for t in trim))
+        elif name == "Head":
+            classic_builder.face_uv(mesh, scale)
+        else:
+            planar_uv(mesh)
+        obj = _link(name, mesh, arm)
+        for bone in SKELETON:  # same order as the deform layer indices
+            obj.vertex_groups.new(name=bone)
+        report.append(f"{name} {tris(mesh)}")
+
+
+def _add_modern(recipe, lib, scale, arm, skeleton, mats, report):
+    """Sculpted look: continuous voxel-fused body, cloth shells."""
+    body_obj = None
+    for name, mesh, prims, mat_names, rigid in build_meshes(recipe, lib, scale):
+        for m in mat_names:
+            mesh.materials.append(mats[m])
+        for poly in mesh.polygons:
+            poly.use_smooth = True
+        obj = _link(name, mesh, arm)
+        if name in ("Body", "Head"):
+            skin(obj, prims, skeleton)
+            if name == "Body":
+                body_obj = obj
+        elif rigid:
+            skin(obj, prims, skeleton, rigid=rigid)
+        else:
+            transfer_weights(obj, body_obj, skeleton)
+        report.append(f"{name} {tris(mesh)}")
 
 
 def main(argv):
