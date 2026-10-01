@@ -20,6 +20,11 @@ config/features=PackedStringArray("4.3", "Forward Plus")
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+[filesystem]
+
+import/blender/enabled=false
+import/fbx/enabled=false
+
 [layer_names]
 
 3d_physics/layer_1="world"
