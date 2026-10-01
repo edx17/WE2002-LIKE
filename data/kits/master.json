@@ -1,0 +1,16 @@
+{
+ "id": "master",
+ "pattern": "plain",
+ "primary": "#e8e8e8",
+ "secondary": "#1a237e",
+ "collar": "#1a237e",
+ "shorts": "#1a237e",
+ "socks": "#e8e8e8",
+ "number": "#1a237e",
+ "number_outline": "#ffffff",
+ "crest": {
+  "primary": "#1a237e",
+  "secondary": "#e8e8e8",
+  "border": "#111111"
+ }
+}

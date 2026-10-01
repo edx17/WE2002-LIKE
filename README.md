@@ -18,7 +18,8 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 | **4** El monstruo | dos tiempos y cambio de arco, energía, faltas con severidad, ventaja, amarillas/rojas, expulsión, lesiones, penales, lateral con la mano, árbitro en cancha, suplentes, DT de la máquina, menú de pausa con cambios/táctica/formación | ✅ jugable (por defecto) |
 | Assets | pipeline receta JSON → Blender → GLB → Godot. Estilo **classic** (diseño WE2002: cuadrado, low-poly, cara pintada) por defecto y **modern** (esculpido) opcional. Dorsales, escudo, manga corta/larga, 13 clips | 🟡 jugadores generados; animaciones procedurales |
 | Ingeniería inversa | 20 métricas de comportamiento, sonda que mide nuestro motor, protocolo de medición | 🟡 falta medir WE2002 |
-| Después | estadios, caras, público, menús, repeticiones, Master League-like, editor | — |
+| Cimientos | 2 jugadores locales (versus y cooperativo), Master League (temporadas, ascensos y descensos, copa, puntos, fichajes, crecimiento), motor de competiciones, grabación del partido (repeticiones y VAR) | ✅ |
+| Después | calibración, menús WE, estadio, público, repeticiones, VAR, competiciones, editor (ver `docs/ROADMAP.md`) | — |
 
 ## Cómo correrlo
 
@@ -26,7 +27,8 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 2. O por línea de comandos:
 
 ```bash
-godot --path .                          # partido completo 11v11 (2 tiempos de 5 min)
+godot --path .                          # pantalla de título: amistoso, 2 jugadores, Master League
+godot --path . -- --players=vs          # directo a un partido de 2 jugadores (vs / coop)
 godot --path . -- --half-minutes=10     # tiempos más largos
 godot --path . -- --match=stage3_11v11  # 11v11 sin reloj
 godot --path . -- --match=stage2_5v5    # 5v5
@@ -204,6 +206,32 @@ docs/     INGENIERIA_INVERSA.md  PIPELINE_ASSETS.md
 - **Menú de pausa** (Esc / Start): reanudar, táctica, formación (4-4-2 / 4-3-3 / 3-5-2),
   cambios con la energía de cada jugador, reiniciar.
 
+## Master League
+
+Es el cimiento de todos los modos de competición (`scripts/career/`):
+
+- **Mundo ficticio** (`tools/data/make_world.py` → `data/world/`): 20 clubes en dos divisiones,
+  460 jugadores con potencial y tipo de crecimiento, camisetas propias, sin licencias.
+- **Empezás** en Segunda con el Equipo Master, un plantel modesto, y 6000 puntos.
+- **Temporada:** liga todos contra todos de ida y vuelta (18 fechas por división) y la Copa Master
+  (eliminación directa con 16 equipos) intercalada.
+- **Partidos:** el tuyo se juega en el motor real y el resto de la fecha se simula según la fuerza
+  de los planteles.
+- **Puntos:** se ganan con resultados y premios, se gastan en fichajes y salarios.
+- **Jugadores:** crecen según edad, potencial y minutos (tipos precoz, normal y tardío), declinan
+  con los años y se retiran (los reemplazan juveniles). Las suspensiones salen de las tarjetas y las
+  lesiones duran semanas.
+- **Fin de temporada:** dos ascienden y dos descienden, más premios, salarios y contratos.
+- **Guardado:** se guarda en `user://saves/`.
+
+## Dos jugadores
+
+**1P:** WASD · J pase · K remate · I filtrado · L globo · Shift sprint · Q cambio · joystick 1.
+**2P:** flechas · numérico 1/2/5/3 · 0 sprint · 4 cambio · joystick 2.
+
+El modo se elige en el título o en la pausa: versus (uno por equipo) o cooperativo (los dos en el
+mismo equipo, cada uno con su cursor de color).
+
 ## Ingeniería inversa y assets
 
 Dos objetivos separados:
@@ -241,7 +269,7 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-90 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+110+ comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
 completo con la misma entrada que un humano, el modelo generado con su AnimationTree

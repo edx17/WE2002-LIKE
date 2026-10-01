@@ -21,6 +21,19 @@ signal restarted(kind: String)
 @export var match_id := "stage4_partido"
 ## Disable to drive every player from AI/scripts (tests, attract mode).
 @export var allow_human := true
+## Full match setup given in code (Master League, tournaments) instead of
+## data/matches/<match_id>.json. Same shape; teams and players may be inline.
+var setup_override: Dictionary = {}
+## Team index the first human plays for (setup "human_team").
+var human_team := 0
+## Knockout ties can't end in a draw (setup "knockout").
+var knockout := false
+## What happened, for careers and tournaments: see match_summary().
+var events := {"scorers": [], "cards": [], "injuries": [], "played": {}}
+
+signal match_finished(summary: Dictionary)
+## The player chose "Salir al menú" (careers listen to this).
+signal exit_requested
 
 var ball: Ball
 var players: Array[PlayerController] = []
@@ -49,6 +62,8 @@ var last_foul := {}
 ## One TeamBrain per team when the match setup gives formations (5v5+).
 var brains: Array = [null, null]
 var offside: OffsideRule
+## Last ~20 s of play + key moments: replays and VAR read from here.
+var recorder: MatchRecorder
 var foul_judge: FoulJudge
 ## Players sent off (out of the match).
 var sent_off: Array[PlayerController] = []
@@ -93,7 +108,9 @@ func _ready() -> void:
 			player_mode = arg.trim_prefix("--players=")
 		elif arg.begins_with("--zoom="):
 			camera.zoom_index = clampi(int(arg.trim_prefix("--zoom=")), 0, camera.zoom_levels.size() - 1)
-	var setup := DataLoader.load_match(match_id)
+	var setup := setup_override if not setup_override.is_empty() else DataLoader.load_match(match_id)
+	human_team = int(setup.get("human_team", 0))
+	knockout = bool(setup.get("knockout", false))
 	direction_steps = int(setup.get("direction_steps", 8))
 	half_seconds = float(setup.get("half_minutes", 5.0)) * 60.0
 	for arg in OS.get_cmdline_user_args():
@@ -107,6 +124,7 @@ func _ready() -> void:
 	ball = (load(BALL_SCENE_PATH) as PackedScene).instantiate() as Ball
 	add_child(ball)
 	offside = OffsideRule.new(self)
+	recorder = MatchRecorder.new(self)
 	foul_judge = FoulJudge.new(self)
 	foul_judge.rng = rng
 	foul_judge.strictness = float(setup.get("referee_strictness", 0.5))
@@ -136,7 +154,7 @@ func _ready() -> void:
 
 
 func _spawn_team(index: int, entry: Dictionary) -> void:
-	var team := DataLoader.load_team(str(entry.get("id", "")))
+	var team: Dictionary = entry.team if entry.has("team") else DataLoader.load_team(str(entry.get("id", "")))
 	team_data[index] = team
 	var colors: Dictionary = team.get("colors", {})
 	var primary := Color.html(str(colors.get("primary", "#d03030")))
@@ -161,11 +179,11 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		"short": str(team.get("short", "T%d" % index)), "attack": attack}
 	bench[index] = []
 	for be: Dictionary in entry.get("bench", []):
-		bench[index].append(str(be.get("id", "")))
+		bench[index].append(_register_player(be))
 	var entries: Array = entry.get("players", [])
 	for slot in entries.size():
 		var pe: Dictionary = entries[slot]
-		var p := _create_player(index, str(pe.get("id", "")), slot, str(pe.get("role", "")))
+		var p := _create_player(index, _register_player(pe), slot, str(pe.get("role", "")))
 		var control := str(pe.get("control", "ai"))
 		if control == "human":
 			_preferred_starter[index] = p
@@ -177,12 +195,31 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 			p.home_position = Vector3(float(home[0]), 0.0, float(home[1]))
 
 
+## Player entries are either {"id": "..."} (data/players/<id>.json) or
+## {"data": {...}} with the attributes inline (careers). Returns the id.
+var _inline_players := {}
+
+func _register_player(entry: Dictionary) -> String:
+	if entry.has("data"):
+		var d: Dictionary = entry.data
+		_inline_players[str(d.id)] = d
+		return str(d.id)
+	return str(entry.get("id", ""))
+
+
+func player_stats(id: String) -> PlayerStats:
+	if _inline_players.has(id):
+		return PlayerStats.from_dict(_inline_players[id])
+	return DataLoader.load_player(id)
+
+
 ## Builds a player of team `index` for formation `slot` (also used for subs).
 func _create_player(index: int, player_id: String, slot: int, role_override := "") -> PlayerController:
 	var tk: Dictionary = _team_kits[index]
 	var brain := brain_for(index)
 	var p := (load(PLAYER_SCENE_PATH) as PackedScene).instantiate() as PlayerController
-	p.stats = DataLoader.load_player(player_id)
+	p.stats = player_stats(player_id)
+	events.played[player_id] = true
 	p.name = "%s_%s" % [tk.short, p.stats.id]
 	p.team = index
 	p.attack_dir = float(tk.attack)
@@ -282,7 +319,7 @@ func _ai_coach(team: int) -> void:
 		return
 	var best_id := ""
 	for id: String in bench[team]:
-		var cand := DataLoader.load_player(id)
+		var cand := player_stats(id)
 		var keeper_ok := (cand.position == "GK") == out.is_keeper
 		if keeper_ok and (best_id == "" or _same_line(cand.position, out.role)):
 			best_id = id
@@ -338,6 +375,7 @@ func _spawn_official() -> void:
 func _physics_process(delta: float) -> void:
 	if phase == Phase.FINISHED:
 		return
+	recorder.capture(delta)
 	if phase == Phase.STOPPED:
 		_stop_timer -= delta
 		if _stop_timer <= 0.0:
@@ -362,6 +400,7 @@ func _physics_process(delta: float) -> void:
 	var flag := offside.update()
 	if not flag.is_empty():
 		var offender: PlayerController = flag.player
+		recorder.mark("offside", offender)
 		_stop("FUERA DE JUEGO", 1.4, _restart_at.bind(1 - offender.team, DirectionResolver.flat(flag.spot), "TIRO LIBRE"))
 		return
 	_check_ball_out()
@@ -430,6 +469,7 @@ func _end_of_half() -> void:
 		clock = 90.0
 		_stop("FINAL DEL PARTIDO  %d - %d" % [score[0], score[1]], 1.0, func() -> void:
 			phase = Phase.FINISHED
+			match_finished.emit(match_summary())
 			for p in players:
 				p.frozen = true
 			hud.flash("FINAL  %d - %d   ·   R para jugar otro" % [score[0], score[1]], 3600.0, true))
@@ -443,6 +483,17 @@ func _switch_sides() -> void:
 	for brain: TeamBrain in brains:
 		if brain != null:
 			brain.attack_dir = -brain.attack_dir
+
+
+## Pause menu "Salir al menú": back to whoever started the match (Master
+## League) or to the title screen.
+func exit_to_menu() -> void:
+	get_tree().paused = false
+	if exit_requested.get_connections().is_empty():
+		get_tree().change_scene_to_file("res://scenes/menu/Title.tscn")
+		queue_free()
+	else:
+		exit_requested.emit()
 
 
 func set_piece_active() -> bool:
@@ -505,7 +556,26 @@ func _team_attacking(side: float) -> int:
 	return 0 if side > 0.0 else 1
 
 
+## Result for careers/tournaments: goals, scorers (player ids), cards,
+## injuries, who played and, in knockout ties, the winner.
+func match_summary() -> Dictionary:
+	var out := {"home_goals": score[0], "away_goals": score[1], "scorers": events.scorers.duplicate(),
+		"cards": events.cards.duplicate(), "injuries": events.injuries.duplicate(),
+		"played": events.played.keys()}
+	if knockout and score[0] == score[1]:
+		# Penalty shoot-out (simulated for now; the playable one comes with set pieces 2.0).
+		out["winner_team"] = 0 if rng.randf() < 0.5 else 1
+		out["penalties"] = true
+	elif knockout:
+		out["winner_team"] = 0 if score[0] > score[1] else 1
+	return out
+
+
 func _goal(team: int) -> void:
+	var scorer := ball.last_touch as PlayerController
+	recorder.mark("goal", scorer, {"team": team})
+	if scorer != null and scorer.team == team and scorer.stats != null:
+		events.scorers.append(scorer.stats.id)
 	score[team] += 1
 	goal_scored.emit(team)
 	for p in players:
@@ -519,10 +589,12 @@ func _on_foul(offender: PlayerController, victim: PlayerController, slide: bool)
 	if phase != Phase.PLAYING:
 		return
 	var verdict := foul_judge.judge(offender, victim, slide)
+	recorder.mark("foul", offender, {"victim_id": victim.stats.id, "card": verdict.card, "penalty": verdict.penalty})
 	stats["fouls"] = int(stats.get("fouls", 0)) + 1
 	last_foul = verdict.merged({"offender": offender, "victim": victim})
 	if verdict.injury:
 		victim.injured = true
+		events.injuries.append(victim.stats.id)
 	var spot := DirectionResolver.flat(victim.global_position)
 	if verdict.penalty:
 		_book(offender, verdict.card)
@@ -561,6 +633,7 @@ func _book(p: PlayerController, card: String) -> void:
 	if card == "":
 		return
 	stats["cards"] = int(stats.get("cards", 0)) + 1
+	events.cards.append({"pid": p.stats.id, "card": card, "minute": int(clock)})
 	hud.show_card(card, p)
 	if card == FoulJudge.YELLOW:
 		p.yellow_cards += 1
@@ -698,11 +771,11 @@ func set_player_mode(mode: String) -> void:
 	pads.clear()
 	player_mode = mode
 	InputSetup.configure(mode == "vs" or mode == "coop")
-	var teams: Array[int] = [0]
+	var teams: Array[int] = [human_team]
 	if mode == "vs":
-		teams = [0, 1]
+		teams = [human_team, 1 - human_team]
 	elif mode == "coop":
-		teams = [0, 0]
+		teams = [human_team, human_team]
 	for i in teams.size():
 		var pad := HumanPad.new(i, teams[i])
 		pads.append(pad)
@@ -894,6 +967,7 @@ func pass_target(p: PlayerController, type: int, dir: Vector3, power: float) -> 
 
 func _on_kicked(p: PlayerController, type: int, result: KickSolver.KickResult) -> void:
 	last_kick_text = "%s: %s" % [p.stats.name, result.describe(type)]
+	recorder.mark("kick", p, {"type": type})
 	# Offside: throw-ins, corners and goal kicks are exempt.
 	var exempt: bool = not set_piece.is_empty() and set_piece.taker == p \
 		and set_piece.kind in ["LATERAL", "CÓRNER", "SAQUE DE ARCO"]

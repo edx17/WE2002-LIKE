@@ -1,0 +1,12 @@
+{
+ "id": "club_04_gk",
+ "pattern": "plain",
+ "sleeves": "long",
+ "primary": "#212121",
+ "secondary": "#555555",
+ "collar": "#555555",
+ "shorts": "#111111",
+ "socks": "#212121",
+ "number": "#111111",
+ "number_outline": "#ffffff"
+}

@@ -1,0 +1,16 @@
+{
+ "id": "club_10",
+ "pattern": "hoops",
+ "primary": "#00838f",
+ "secondary": "#ffffff",
+ "collar": "#ffffff",
+ "shorts": "#00838f",
+ "socks": "#00838f",
+ "number": "#ffffff",
+ "number_outline": "#111111",
+ "crest": {
+  "primary": "#00838f",
+  "secondary": "#ffffff",
+  "border": "#202020"
+ }
+}

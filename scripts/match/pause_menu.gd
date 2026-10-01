@@ -134,6 +134,9 @@ func _show(screen: String) -> void:
 			_items.append({"text": "Reiniciar partido", "action": func() -> void:
 				close()
 				m.restart_match()})
+			_items.append({"text": "Salir al menú", "action": func() -> void:
+				close()
+				m.exit_to_menu()})
 			_items.append({"text": "Salir del juego", "action": func() -> void: get_tree().quit()})
 			_hint.text = "↑↓ elegir · PASE confirmar · REMATE volver"
 		"subs_out":
@@ -155,7 +158,7 @@ func _show(screen: String) -> void:
 		"subs_in":
 			_title.text = "¿QUIÉN ENTRA por %s?" % _sub_out.stats.name
 			for id: String in m.bench[team]:
-				var st := DataLoader.load_player(id)
+				var st := m.player_stats(id)
 				_items.append({"text": "%-4s %2d  %s" % [st.position, st.number, st.name], "action": func() -> void:
 					if m.request_substitution(_sub_out, id):
 						m.hud.flash("CAMBIO PEDIDO: ENTRA %s" % st.name.to_upper(), 1.5, false)

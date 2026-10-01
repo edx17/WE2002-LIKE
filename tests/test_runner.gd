@@ -54,6 +54,10 @@ func _run() -> void:
 	await _test_substitutions()
 	await _test_referee_and_menu()
 	await _test_two_players()
+	_test_competition()
+	_test_master_league()
+	await _test_master_league_match()
+	await _test_recorder()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -560,11 +564,15 @@ func _test_11v11_soak() -> void:
 		if brain.shape < 0.3:
 			var xs: Array[float] = []
 			for p in brain.players:
-				if brain.role_of(p) in ["CB", "LB", "RB"] and not p.is_grounded_state():
+				# The line = defenders holding it (the one pressing or covering steps out on purpose).
+				var mode := int(brain.assignment(p).mode)
+				if brain.role_of(p) in ["CB", "LB", "RB"] and not p.is_grounded_state() \
+						and mode != TeamBrain.Mode.PRESS and mode != TeamBrain.Mode.COVER:
 					xs.append(p.global_position.x)
-			xs.sort()
-			spread += xs[xs.size() - 1] - xs[0]
-			samples += 1
+			if xs.size() >= 2:
+				xs.sort()
+				spread += xs[xs.size() - 1] - xs[0]
+				samples += 1
 	print("       goles %d-%d, %s" % [m.score[0], m.score[1], m.stats])
 	check(swarm / frames < 3.5, "11v11 sin enjambre: %.1f jugadores cerca de la pelota" % (swarm / frames))
 	check(samples > 0 and spread / samples < 10.0, "línea de 4 en bloque: %.1f m entre el más adelantado y el más atrasado" % (spread / maxf(samples, 1)))
@@ -800,6 +808,150 @@ func _test_two_players() -> void:
 	check(p2.player == mate and p1.player == p1_player, "en cooperativo el pase le da el receptor a quien pasó")
 	m.set_player_mode("1")
 	check(m.pads.size() == 1 and not InputSetup.is_two_players(), "volver a 1 jugador")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_competition() -> void:
+	print("Motor de competiciones")
+	var teams := ["a", "b", "c", "d", "e", "f"]
+	var days := Competition.round_robin(teams)
+	var pairs := {}
+	var per_team := {}
+	var ok := days.size() == 10
+	for day: Array in days:
+		var seen := {}
+		for m: Dictionary in day:
+			ok = ok and not seen.has(m.home) and not seen.has(m.away)
+			seen[m.home] = true
+			seen[m.away] = true
+			pairs[m.home + ">" + m.away] = int(pairs.get(m.home + ">" + m.away, 0)) + 1
+			per_team[m.home] = int(per_team.get(m.home, 0)) + 1
+			per_team[m.away] = int(per_team.get(m.away, 0)) + 1
+	check(ok and pairs.size() == 30 and pairs.values().all(func(v: int) -> bool: return v == 1),
+		"todos contra todos ida y vuelta: cada cruce una vez de local y una de visitante, nadie juega dos veces por fecha")
+	var table := Competition.new_table(["a", "b", "c"])
+	Competition.record(table, "a", "b", 2, 0)
+	Competition.record(table, "c", "a", 1, 1)
+	Competition.record(table, "b", "c", 3, 3)
+	var rows := Competition.standings(table)
+	check(rows[0].team == "a" and rows[0].points == 4 and rows[1].team == "c", "tabla: 3 por ganar, 1 por empatar, desempate por diferencia")
+
+
+func _test_master_league() -> void:
+	print("Master League")
+	var ml := MasterLeague.new_career(42)
+	var st := ml.state
+	check(st.clubs.size() == 20 and ml.user_division() == "2" and int(st.points) == MasterLeague.START_POINTS,
+		"arranca: 20 clubes, el Equipo Master en Segunda, con %d puntos" % MasterLeague.START_POINTS)
+	var lu := ml.lineup(st.user_club)
+	check(lu.xi.size() == 11 and lu.bench.size() == 5 and ml.player(lu.xi[0].pid).position == "GK",
+		"alineación automática: 11 titulares (arquero incluido) y 5 suplentes")
+	var setup := ml.match_setup(ml.user_fixture())
+	check(setup.teams.size() == 2 and setup.teams[0].players.size() == 11 and setup.teams[0].players[0].has("data"),
+		"arma el partido para el motor con los jugadores de la carrera")
+	var points0 := int(st.points)
+	var growth_before := 0
+	for pid: String in st.players:
+		growth_before += Rating.overall(st.players[pid])
+	var events: int = st.calendar.size()
+	for i in events:
+		ml.advance()
+	var h: Dictionary = st.history[0]
+	check(st.history.size() == 1 and int(st.season) == 2, "una temporada completa (%d fechas de liga y copa)" % events)
+	check(h.promoted.size() == 2 and h.relegated.size() == 2
+		and h.promoted.all(func(c: String) -> bool: return int(ml.club(c).division) == 1)
+		and h.relegated.all(func(c: String) -> bool: return int(ml.club(c).division) == 2),
+		"dos ascienden y dos descienden")
+	check(str(st.cup.get("winner", "")) == "" and h.cup != "", "la copa tiene campeón (%s)" % ml.club(h.cup).name)
+	var played := 0
+	for row: Dictionary in st.leagues["1"].table.values():
+		played += int(row.played)
+	check(played == 0, "la nueva temporada arranca con la tabla en cero")
+	check(int(st.points) != points0, "los puntos cambian con resultados, premios y salarios (%d → %d)" % [points0, int(st.points)])
+	var aged := ml.player("master_p01")
+	check(int(aged.age) >= 22, "los jugadores cumplen años")
+	# Transfers.
+	var target: String = ml.market()[20]
+	var value := Rating.value(ml.player(target))
+	st.points = value * 3
+	var low := ml.make_offer(target, int(value * 0.5))
+	var high := ml.make_offer(target, int(value * 1.4))
+	check(not low.accepted and high.accepted and target in ml.club(st.user_club).squad,
+		"fichajes: rechaza una oferta baja, acepta una justa")
+	# Save / load.
+	check(ml.save_slot(9), "guarda la carrera")
+	var loaded := MasterLeague.load_slot(9)
+	check(loaded != null and int(loaded.state.season) == 2 and target in loaded.club(loaded.state.user_club).squad,
+		"y la carga intacta")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(MasterLeague.SAVE_DIR + "master_league_9.json"))
+	# Several seasons: young players with potential grow, veterans decline.
+	var ml2 := MasterLeague.new_career(7)
+	var young := ""
+	var old := ""
+	for pid: String in ml2.state.players:
+		var p: Dictionary = ml2.state.players[pid]
+		if young == "" and int(p.age) <= 19 and int(p.potential) - Rating.overall(p) > 12:
+			young = pid
+		if old == "" and int(p.age) >= 32:
+			old = pid
+	var y0 := Rating.overall(ml2.player(young))
+	var o0 := Rating.overall(ml2.player(old))
+	for season in 3:
+		for i in ml2.state.calendar.size():
+			ml2.advance()
+	var y1 := Rating.overall(ml2.player(young))
+	var o1 := Rating.overall(ml2.player(old)) if ml2.state.players.has(old) else -1
+	check(y1 > y0, "un juvenil con potencial crece (%d → %d en 3 temporadas)" % [y0, y1])
+	check(o1 < o0, "un veterano declina (%d → %d)" % [o0, o1])
+
+
+func _test_master_league_match() -> void:
+	print("Master League: partido real en el motor")
+	var ml := MasterLeague.new_career(3)
+	var fixture := ml.user_fixture()
+	var m := MATCH_SCENE.instantiate() as MatchController
+	m.setup_override = ml.match_setup(fixture)
+	m.allow_human = false
+	root.add_child(m)
+	await _frames(2)
+	m.half_seconds = 2.0
+	check(m.players.filter(func(p: PlayerController) -> bool: return p.team == 0).size() == 11
+		and m.bench[0].size() == 5 and m.human_team == (0 if fixture.home == ml.state.user_club else 1),
+		"el motor arma el partido con los planteles de la carrera")
+	var summary := {}  # lambdas capture locals by value: mutate, don't reassign
+	m.match_finished.connect(func(r: Dictionary) -> void: summary.merge(r))
+	for i in 120 * 40:
+		await physics_frame
+		if not summary.is_empty():
+			break
+	check(not summary.is_empty() and summary.played.size() >= 22, "el partido termina y devuelve el resumen")
+	if summary.is_empty():
+		m.queue_free()
+		return
+	var step := int(ml.state.step)
+	ml.advance(summary)
+	var row: Dictionary = ml.state.leagues[ml.user_division()].table[ml.state.user_club]
+	check(int(ml.state.step) == step + 1 and int(row.played) == 1 and int(row.gf) == int(summary.home_goals if fixture.home == ml.state.user_club else summary.away_goals),
+		"el resultado jugado entra en la tabla de la Master League")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_recorder() -> void:
+	print("Grabación del partido (base de repeticiones y VAR)")
+	var m := _new_match("stage4_partido")
+	await _frames(120 * 5)
+	var p := m.players[3]
+	var past_pos := p.global_position
+	await _frames(120 * 2)
+	var f := m.recorder.frame_ago(2.0)
+	var i := Array(f.ids).find(p.stats.id)
+	check(m.recorder.duration() > 6.5 and i >= 0 and (f.pos[i] as Vector3).distance_to(past_pos) < 0.6,
+		"guarda los últimos segundos y puede volver a un instante (error %.2f m)" % (f.pos[i] as Vector3).distance_to(past_pos))
+	check(f.ids.size() >= 22 and f.has("ball") and str(f.anim[i]) != "", "cada cuadro tiene a todos, la pelota y la animación")
+	var kick := m.recorder.last_mark("kick")
+	check(not kick.is_empty() and str(kick.player_id) != "", "marca los momentos clave (la última patada: %s)" % str(kick.player_id))
 	m.queue_free()
 	await _frames(1)
 

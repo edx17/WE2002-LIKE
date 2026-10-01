@@ -1,0 +1,16 @@
+{
+ "id": "club_12",
+ "pattern": "plain",
+ "primary": "#1565c0",
+ "secondary": "#1e5bc6",
+ "collar": "#1e5bc6",
+ "shorts": "#ffffff",
+ "socks": "#1565c0",
+ "number": "#1e5bc6",
+ "number_outline": "#ffffff",
+ "crest": {
+  "primary": "#1565c0",
+  "secondary": "#1e5bc6",
+  "border": "#202020"
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "id": "club_14_gk",
+ "pattern": "plain",
+ "sleeves": "long",
+ "primary": "#d98ac4",
+ "secondary": "#b0609c",
+ "collar": "#b0609c",
+ "shorts": "#111111",
+ "socks": "#d98ac4",
+ "number": "#111111",
+ "number_outline": "#ffffff"
+}

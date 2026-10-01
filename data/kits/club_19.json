@@ -1,0 +1,16 @@
+{
+ "id": "club_19",
+ "pattern": "halves",
+ "primary": "#00838f",
+ "secondary": "#37474f",
+ "collar": "#37474f",
+ "shorts": "#111111",
+ "socks": "#00838f",
+ "number": "#37474f",
+ "number_outline": "#ffffff",
+ "crest": {
+  "primary": "#00838f",
+  "secondary": "#37474f",
+  "border": "#202020"
+ }
+}
