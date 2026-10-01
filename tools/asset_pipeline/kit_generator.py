@@ -9,7 +9,7 @@ machine, including CI, without Blender.
 UV contract shared with player_generator.py (every player uses the same one):
 
     u: angle around the torso      0.0 back | 0.25 right side | 0.5 chest | 0.75 left side | 1.0 back
-    v: height                      0.0 hem  .......................................  1.0 collar
+    v: height                      0.0 hem  ..........  0.95 shoulders | 0.955-1.0 collar ring only
 
 Patterns: plain, stripes (vertical), hoops (horizontal), halves, sash.
 """

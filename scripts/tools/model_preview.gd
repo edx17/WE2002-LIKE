@@ -13,11 +13,13 @@ var appearance_index := 0
 var kit_index := 0
 var clip_index := 0
 var auto_cycle := true
+var number := 10
 
 var _holder: Node3D
 var _anim: AnimationPlayer
 var _label: Label
 var _clip_time := 0.0
+var _fixed_yaw := INF
 
 
 func _ready() -> void:
@@ -29,6 +31,10 @@ func _ready() -> void:
 			appearance_index = maxi(0, appearances.find(arg.trim_prefix("--appearance=")))
 		elif arg.begins_with("--kit="):
 			kit_index = maxi(0, kits.find(arg.trim_prefix("--kit=")))
+		elif arg.begins_with("--number="):
+			number = int(arg.trim_prefix("--number="))
+		elif arg.begins_with("--yaw="):
+			_fixed_yaw = deg_to_rad(float(arg.trim_prefix("--yaw=")))
 		elif arg.begins_with("--clip="):
 			clip_index = maxi(0, clips.find(arg.trim_prefix("--clip=")))
 			auto_cycle = false
@@ -80,7 +86,7 @@ func _load_model() -> void:
 	model.rotation.y = PI
 	_holder.add_child(model)
 	var kit: Variant = DataLoader.load_json("kits/%s.json" % kits[kit_index])
-	PlayerModel.apply_kit(model, kit if kit is Dictionary else {})
+	PlayerModel.apply_kit(model, kit if kit is Dictionary else {}, number)
 	_anim = model.find_children("*", "AnimationPlayer", true, false)[0] as AnimationPlayer
 	_play()
 
@@ -96,7 +102,10 @@ func _play() -> void:
 
 
 func _process(delta: float) -> void:
-	_holder.rotation.y += delta * 0.35
+	if _fixed_yaw != INF:
+		_holder.rotation.y = _fixed_yaw
+	else:
+		_holder.rotation.y += delta * 0.35
 	_clip_time += delta
 	if auto_cycle and _clip_time > maxf(1.6, AnimationTimings.length(clips[clip_index], 1.0) * 3.0):
 		clip_index = (clip_index + 1) % clips.size()

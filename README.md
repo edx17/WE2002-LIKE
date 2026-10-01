@@ -16,7 +16,7 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 | **2** 5 vs 5 | IA de posicionamiento, marcaje, apoyo, transiciones | ⏳ la IA ya tiene los modos, falta formación |
 | **3** 11 vs 11 | formación, roles, táctica, presión, línea defensiva, offside, pelota parada | ⏳ |
 | **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay lateral, córner, saque de arco y falta simplificados |
-| Assets | pipeline receta JSON → Blender → GLB → Godot, PLAYER_001 con esqueleto y 13 clips, kits como textura | 🟡 sustituto funcional; falta el PLAYER_MASTER esculpido |
+| Assets | pipeline receta JSON → Blender → GLB → Godot: cuerpo continuo (~29k tris), ropa con volumen, manga corta/larga, dorsales, 13 clips | 🟡 jugadores generados; animaciones procedurales |
 | Ingeniería inversa | 20 métricas de comportamiento, sonda que mide nuestro motor, protocolo de medición | 🟡 falta medir WE2002 |
 | Después | estadios, caras, público, menús, repeticiones, Master League-like, editor | — |
 
@@ -156,7 +156,7 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-52 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+54 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
 completo con la misma entrada que un humano, el modelo generado con su AnimationTree

@@ -15,7 +15,7 @@ static func model_path(appearance: String) -> String:
 
 
 ## Returns true when a real model was attached.
-static func attach(player: PlayerController, appearance: String, kit: Dictionary) -> bool:
+static func attach(player: PlayerController, appearance: String, kit: Dictionary, number := 0) -> bool:
 	if appearance == "" or not ResourceLoader.exists(model_path(appearance)):
 		return false
 	var scene := load(model_path(appearance)) as PackedScene
@@ -29,7 +29,7 @@ static func attach(player: PlayerController, appearance: String, kit: Dictionary
 	visual.add_child(model)
 	for part: String in PLACEHOLDER_PARTS:
 		(visual.get_node(part) as Node3D).visible = false
-	apply_kit(model, kit)
+	apply_kit(model, kit, number)
 
 	var anim_player := _find(model, "AnimationPlayer") as AnimationPlayer
 	if anim_player != null:
@@ -43,16 +43,19 @@ static func attach(player: PlayerController, appearance: String, kit: Dictionary
 
 
 ## Swap kit materials by name: the same model wears every team's kit.
-static func apply_kit(model: Node, kit: Dictionary) -> void:
+## Kits choose short or long sleeves; the shirt carries the player's number.
+static func apply_kit(model: Node, kit: Dictionary, number := 0) -> void:
+	var long_sleeves := str(kit.get("sleeves", "short")) == "long"
+	for shirt_name: String in ["Shirt_Short", "Shirt_Long"]:
+		var shirt_node := model.find_child(shirt_name, true, false) as Node3D
+		if shirt_node != null:
+			shirt_node.visible = (shirt_name == "Shirt_Long") == long_sleeves
 	var shirt := StandardMaterial3D.new()
-	shirt.roughness = 0.8
+	shirt.roughness = 0.82
 	shirt.metallic_specular = 0.35
-	var tex_path := KIT_DIR + str(kit.get("id", "")) + ".png"
-	if ResourceLoader.exists(tex_path):
-		shirt.albedo_texture = load(tex_path)
-		shirt.texture_repeat = true
-	else:
-		shirt.albedo_color = Color.html(str(kit.get("primary", "#cccccc")))
+	shirt.cull_mode = BaseMaterial3D.CULL_DISABLED  # see the inside through sleeves/hem
+	shirt.albedo_texture = KitTexture.build(kit, number)
+	shirt.texture_repeat = true
 	var shorts := _cloth(Color.html(str(kit.get("shorts", "#ffffff"))))
 	var socks := _cloth(Color.html(str(kit.get("socks", kit.get("primary", "#cccccc")))))
 	for mesh_instance in model.find_children("*", "MeshInstance3D", true, false):
@@ -74,6 +77,7 @@ static func _cloth(color: Color) -> StandardMaterial3D:
 	m.albedo_color = color
 	m.roughness = 0.82
 	m.metallic_specular = 0.3
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return m
 
 

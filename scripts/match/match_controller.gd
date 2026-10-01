@@ -97,7 +97,7 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		p.direction_steps = direction_steps
 		add_child(p)
 		p.set_colors(primary, secondary)
-		PlayerModel.attach(p, p.stats.appearance, kit)
+		PlayerModel.attach(p, p.stats.appearance, kit, p.stats.number)
 		p.kicked.connect(_on_kicked)
 		var control := str(pe.get("control", "ai"))
 		if control == "human" and allow_human and human == null:

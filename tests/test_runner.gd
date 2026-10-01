@@ -126,6 +126,16 @@ func _test_generated_model() -> void:
 			var o := (mi as MeshInstance3D).get_surface_override_material(i) as StandardMaterial3D
 			shirt_ok = shirt_ok or (o != null and o.albedo_texture != null)
 	check(shirt_ok, "la camiseta del equipo se aplica como textura sobre el modelo")
+	var short_shirt := p.find_child("Shirt_Short", true, false) as Node3D
+	var long_shirt := p.find_child("Shirt_Long", true, false) as Node3D
+	check(short_shirt != null and short_shirt.visible and long_shirt != null and not long_shirt.visible,
+		"kit de manga corta: se ve Shirt_Short y no Shirt_Long")
+	var gk: Dictionary = DataLoader.load_json("kits/gk_pink.json")
+	var plain := KitTexture.build(gk, 0).get_image()
+	var numbered := KitTexture.build(gk, 1).get_image()
+	var w := numbered.get_width()
+	check(plain.get_pixel(w / 50, numbered.get_height() / 2) != numbered.get_pixel(w / 50, numbered.get_height() / 2),
+		"el dorsal se imprime en la espalda de la camiseta")
 	check(is_equal_approx(PlayerController.SHOT_WINDUP, AnimationTimings.contact("SHOOT", -1.0)),
 		"la ventana de remate sale del mismo JSON que el clip")
 	var input := ScriptedInput.new()

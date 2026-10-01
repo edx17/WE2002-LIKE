@@ -9,11 +9,12 @@ data/appearance/components.json ─┼─► tools/asset_pipeline/player_generat
 data/animation/clips.json ───────┘              │
                                                 ▼
                                assets/players/generated/player_XXX.glb
-                               (malla + esqueleto + 13 clips)
+                               (Body, Head, Shirt_Short, Shirt_Long, Shorts,
+                                Boots, Hair, Face + esqueleto + 13 clips)
 data/kits/*.json ──► tools/asset_pipeline/kit_generator.py ──► assets/kits/*.png
                                                 │
                                                 ▼
-                        Godot: PlayerModel → kit por material → AnimationTree
+                        Godot: PlayerModel → kit + dorsal (KitTexture) → AnimationTree
 ```
 
 ## Generar
@@ -46,27 +47,51 @@ volumen. Cada jugador en `data/players/*.json` elige su receta con `"appearance"
 
 - **Orientación.** Blender Z arriba, el personaje mira a −Y, pies en el origen. Godot lo gira 180°.
 - **Esqueleto.** `Hips, Spine, Chest, Neck, Head`, y `UpperArm/LowerArm/Hand/UpperLeg/LowerLeg/Foot`
-  `.L/.R`. Skinning rígido por pieza, que es robusto, barato y fiel a la época.
+  `.L/.R`.
 - **Materiales por nombre.** `SKIN, KIT_SHIRT, KIT_SHORTS, KIT_SOCKS, BOOTS, HAIR, EYES`. Godot
   reemplaza los `KIT_*` con el kit del equipo.
 - **UV de camiseta.** Proyección cilíndrica alrededor del torso: `u` 0.5 = pecho, 0/1 = espalda,
-  `v` 0 = ruedo, 1 = cuello. Cualquier textura de 1024² que respete eso sirve para todos los
+  `v` 0 = ruedo, 0.95 = hombros; la franja `v > 0.955` es solo para el anillo del cuello. Cualquier textura de 1024² que respete eso sirve para todos los
   jugadores, sea generada (`plain, stripes, hoops, halves, sash`) o pintada a mano.
 - **Clips.** Nombres y duraciones en `data/animation/clips.json`, el mismo archivo del que el
   gameplay lee las ventanas de patada. `contact` = frame de contacto con la pelota.
 - **Look.** Material de pocas capas: color base, rugosidad alta y especular moderado. La luz, el
   SSAO, el grading y la **cámara** viven en `data/look/we2002_hd.json`.
 
-## Estado y próximos pasos
+## Cómo se esculpe (sculpt.py)
 
-PLAYER_001 hoy tiene unos 4k triángulos de primitivas paramétricas. Es un sustituto con el
-esqueleto, la animación y los contratos finales. El objetivo artístico sigue siendo
-cuerpo 20k–35k, cabeza 5k–10k, pelo 2k–8k y botines 1k–3k. El camino:
+La referencia visual es la de los remasters actuales de WE2002: proporciones modernas,
+cuerpo continuo, ropa con volumen y dorsal grande en la espalda. La receta:
 
-1. Esculpir en Blender un `PLAYER_MASTER.blend` real con el mismo esqueleto, los mismos
-   nombres de material y el UV de camiseta respetando el contrato. El generador pasa a
-   ensamblar variantes (cuerpo/cara/pelo/botín) de ese archivo en lugar de primitivas.
-2. Reemplazar las animaciones procedurales por clips hechos a mano o capturados, con los mismos
-   nombres y tiempos. El gameplay no cambia.
-3. Números y nombres en la espalda: una textura por jugador, derivada del kit.
+1. **Anatomía como primitivas.** Unas 50 elipsoides y cápsulas cónicas (pelvis, glúteos,
+   costillas, pectorales, trapecios, deltoides, bíceps, cuádriceps, gemelos, cráneo, mandíbula,
+   nariz, arco superciliar, orejas…), cada una asignada a un hueso.
+2. **Fusión por voxel remesh.** Se unen en una sola superficie continua, sin costuras en las
+   articulaciones, y se suaviza. El tamaño de voxel sale del presupuesto de triángulos (nunca se
+   decima: el decimado deja triángulos largos que se rompen al animar).
+3. **Ropa como cáscaras.** La camiseta (torso más una manga por brazo), el short y los botines
+   son copias infladas de la anatomía, cortadas en el ruedo, el cuello, los puños y las piernas.
+   Los bordes se proyectan sobre la superficie de corte, así quedan rectos como costuras.
+4. **Skinning.** El cuerpo recibe pesos suaves de sus primitivas y la ropa copia los pesos del
+   vértice de piel más cercano, así nunca se rompe.
+5. **Cabeza aparte**, con voxel más fino, para que nariz, cejas, mandíbula y orejas no se pierdan.
+
+| Malla | Triángulos |
+|---|---|
+| Body | ~29k |
+| Head | ~7k |
+| Shirt_Short / Shirt_Long | ~6k / ~7k (se ve una sola) |
+| Shorts, Boots, Hair | ~3k, ~3k, ~4k |
+| Face (ojos, cejas) | ~2.5k |
+
+El kit decide manga corta o larga (`"sleeves": "long"`, por ejemplo para arqueros). El número
+del jugador se imprime en tiempo de ejecución, grande en la espalda y chico en el pecho, con
+borde, en los colores `number` / `number_outline` del kit.
+
+## Próximos pasos
+
+1. Un `PLAYER_MASTER.blend` esculpido a mano puede reemplazar las primitivas manteniendo los
+   contratos. El generador ya resuelve la ropa, el skinning, el UV y la exportación.
+2. Animaciones hechas a mano o capturadas, con los mismos nombres y tiempos.
+3. Nombre en la espalda (hoy solo número) y escudo en el pecho.
 4. Editor de jugadores in-game a partir de `ModelPreview`, que escribe recetas JSON.

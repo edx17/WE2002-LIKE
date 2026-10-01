@@ -1,2 +1,11 @@
-{ "id": "team_b_home", "pattern": "plain", "primary": "#1e5bc6", "secondary": "#10204a",
-  "collar": "#10204a", "shorts": "#10204a", "socks": "#1e5bc6" }
+{
+  "id": "team_b_home",
+  "pattern": "plain",
+  "primary": "#1e5bc6",
+  "secondary": "#10204a",
+  "collar": "#10204a",
+  "shorts": "#10204a",
+  "socks": "#1e5bc6",
+  "number": "#ffffff",
+  "number_outline": "#10204a"
+}

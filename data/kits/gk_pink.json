@@ -1,0 +1,12 @@
+{
+  "id": "gk_pink",
+  "pattern": "plain",
+  "sleeves": "long",
+  "primary": "#d98ac4",
+  "secondary": "#b0609c",
+  "collar": "#b0609c",
+  "shorts": "#d98ac4",
+  "socks": "#d98ac4",
+  "number": "#2a1a2a",
+  "number_outline": "#f0c8e6"
+}

@@ -4,14 +4,22 @@
     python  tools/asset_pipeline/player_generator.py player_001        (with the `bpy` module)
     ... -- --all                                                        (every recipe in data/appearance)
 
-One master body is assembled from parametric components (body type, face,
-hair, boots, skin) and a shared skeleton, so a small library produces many
-different players. Every part is rigidly bound to one bone, the way players
-of that era were built: robust, cheap and readable from the gameplay camera.
+One master body is sculpted from parametric anatomy (body type, face, hair,
+boots, skin) over a shared skeleton, so a small library produces many
+different players (see sculpt.py):
+
+    Body         one continuous organic surface, neck to toe (voxel-fused)
+    Head         finer voxel so nose, brow, jaw and ears survive
+    Shirt_Short  loose shell with hem, collar and short sleeves
+    Shirt_Long   same with long sleeves (goalkeepers / winter kits)
+    Shorts       loose shell, open at the waist and legs
+    Boots        low-cut shells
+    Hair         stylised volume cut along a hairline
+    Face         eyes and brows
 
 The kit is NOT baked into the player. Shirt, shorts and socks get the
 KIT_SHIRT / KIT_SHORTS / KIT_SOCKS materials and Godot swaps in the team's
-kit texture at runtime (kit_generator.py): one model, every team.
+kit texture (with the player's number) at runtime: one model, every team.
 
 Animation timings come from data/animation/clips.json, the same file the
 gameplay reads for kick windows and state durations.
@@ -26,7 +34,11 @@ import sys
 
 import bpy  # noqa: I001 - must come first: it provides bmesh/mathutils
 import bmesh
-from mathutils import Euler, Matrix, Quaternion, Vector
+from mathutils import Euler, Vector
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sculpt import (Capsule, Ellipsoid, cut, cylindrical_uv, fuse, join, nearest,  # noqa: E402
+                    planar_uv, skin, transfer_weights, tris)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA = os.path.join(ROOT, "data")
@@ -70,156 +82,236 @@ for _name in [n for n in SKELETON if n.endswith(".L")]:
         (-_h[0], _h[1], _h[2]), (-_t[0], _t[1], _t[2]), _p.replace(".L", ".R") if _p and _p.endswith(".L") else _p)
 
 
-# --- mesh building -----------------------------------------------------------------
+# --- anatomy -------------------------------------------------------------------------
+#
+# Reference: modern-proportioned footballer (~7.5 heads), broad shoulders,
+# athletic legs, as seen from the broadcast camera. All values at 1.80 m;
+# body type / weight scale girth, the recipe height scales everything.
 
 MATERIALS = ["SKIN", "KIT_SHIRT", "KIT_SHORTS", "KIT_SOCKS", "BOOTS", "HAIR", "EYES"]
 
-
-class BodyBuilder:
-    """Accumulates primitive parts into one skinned mesh."""
-
-    def __init__(self, scale):
-        self.s = scale
-        self.bm = bmesh.new()
-        self.uv = self.bm.loops.layers.uv.verify()
-        self.deform = self.bm.verts.layers.deform.verify()
-        self.groups = list(SKELETON.keys())
-
-    def _finish(self, verts, bone, mat, matrix, smooth):
-        bmesh.ops.transform(self.bm, matrix=matrix, verts=verts)
-        gi = self.groups.index(bone)
-        vset = set(verts)
-        for v in verts:
-            v[self.deform][gi] = 1.0
-        for f in {f for v in verts for f in v.link_faces}:
-            if all(v in vset for v in f.verts):
-                f.material_index = MATERIALS.index(mat)
-                f.smooth = smooth
-
-    def _place(self, loc, size, rot):
-        s = self.s
-        return (Matrix.Translation(Vector(loc) * s)
-                @ Euler([math.radians(a) for a in rot]).to_matrix().to_4x4()
-                @ Matrix.Diagonal((size[0] * s, size[1] * s, size[2] * s, 1.0)))
-
-    def sphere(self, bone, mat, loc, size, rot=(0, 0, 0), segs=(16, 10), smooth=True):
-        res = bmesh.ops.create_uvsphere(self.bm, u_segments=segs[0], v_segments=segs[1], radius=1.0, calc_uvs=True)
-        self._finish(res["verts"], bone, mat, self._place(loc, size, rot), smooth)
-
-    def tube(self, bone, mat, a, b, r1, r2, sx=1.0, sy=1.0, segs=12, smooth=True):
-        """Tapered cylinder from point a to point b (radii r1 at a, r2 at b)."""
-        a, b = Vector(a), Vector(b)
-        axis = b - a
-        res = bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=segs,
-                                    radius1=r1, radius2=r2, depth=axis.length, calc_uvs=True)
-        rot = Vector((0, 0, 1)).rotation_difference(axis.normalized()).to_matrix().to_4x4()
-        m = (Matrix.Translation((a + b) * 0.5 * self.s) @ rot
-             @ Matrix.Diagonal((sx * self.s, sy * self.s, self.s, 1.0)))
-        self._finish(res["verts"], bone, mat, m, smooth)
-
-    def box(self, bone, mat, loc, size, rot=(0, 0, 0)):
-        res = bmesh.ops.create_cube(self.bm, size=1.0, calc_uvs=True)
-        self._finish(res["verts"], bone, mat, self._place(loc, size, rot), False)
-
-    def unwrap_kit(self):
-        """Kit UV contract (see kit_generator.py): cylindrical projection around
-        the torso. u = angle around the body (0.5 = chest, 0/1 = back),
-        v = height from the hem (0) to the collar (1)."""
-        shirt = MATERIALS.index("KIT_SHIRT")
-        z0, z1 = 1.0 * self.s, 1.5 * self.s
-        for f in self.bm.faces:
-            if f.material_index != shirt:
-                continue
-            uvs = []
-            for loop in f.loops:
-                co = loop.vert.co
-                u = math.atan2(co.x, -co.y) / (2 * math.pi) + 0.5
-                v = (co.z - z0) / (z1 - z0)
-                uvs.append([u, min(max(v, 0.0), 1.0)])
-            # Faces crossing the back seam: keep them continuous (texture repeats).
-            if max(uv[0] for uv in uvs) - min(uv[0] for uv in uvs) > 0.5:
-                for uv in uvs:
-                    if uv[0] < 0.5:
-                        uv[0] += 1.0
-            for loop, uv in zip(f.loops, uvs):
-                loop[self.uv].uv = uv
-
-    def build(self, name):
-        self.unwrap_kit()
-        mesh = bpy.data.meshes.new(name)
-        self.bm.to_mesh(mesh)
-        self.bm.free()
-        obj = bpy.data.objects.new(name, mesh)
-        for g in self.groups:
-            obj.vertex_groups.new(name=g)
-        return obj
+SOCK_TOP = 0.47
+SHIRT_HEM = 0.96
+SHORTS_TOP = 1.02
+SHORTS_HEM = 0.66
+BOOT_TOP = 0.115
 
 
-def build_body(b, recipe, lib):
+def anatomy(recipe, lib):
     body = lib["body_types"][recipe["body"]]
     face = lib["faces"][recipe["face"]]
     boot = lib["boots"][recipe["boot"]]
-    # Weight shapes the girth relative to a 23 BMI athlete.
     bmi = recipe["weight"] / (recipe["height"] ** 2)
-    girth = max(0.85, min(1.2, (bmi / 23.0) ** 0.5))
+    girth = max(0.88, min(1.18, (bmi / 23.0) ** 0.5))
     sh, ch, wa, li = (body["shoulders"] * girth, body["chest"] * girth, body["waist"] * girth, body["limbs"] * girth)
 
-    # Torso: shirt, two segments so the spine can bend.
-    b.tube("Spine", "KIT_SHIRT", (0, 0, 1.0), (0, 0, 1.26), 0.16 * wa, 0.17 * ch, sx=1.15, sy=0.72)
-    b.tube("Chest", "KIT_SHIRT", (0, 0, 1.24), (0, 0, 1.46), 0.17 * ch, 0.15 * sh, sx=1.28 * sh, sy=0.7)
-    b.sphere("Chest", "KIT_SHIRT", (0, 0, 1.43), (0.2 * sh, 0.1, 0.06))  # shoulder line
-    # Neck + head.
-    b.tube("Neck", "SKIN", (0, 0, 1.44), (0, 0, 1.58), 0.055, 0.05)
-    b.sphere("Head", "SKIN", (0, -0.005, 1.67), (0.098 * face["cheeks"], 0.112, 0.125))
-    b.sphere("Head", "SKIN", (0, -0.035, 1.6), (0.075 * face["jaw"], 0.08, 0.06))  # jaw
-    b.box("Head", "SKIN", (0, -0.118, 1.655), (0.024, 0.03 * face["nose"], 0.045 * face["nose"]), rot=(12, 0, 0))
-    for x in (-0.042, 0.042):
-        b.sphere("Head", "EYES", (x, -0.098, 1.69), (0.013, 0.008, 0.009), segs=(8, 5))
-        b.box("Head", "HAIR", (x, -0.103, 1.713), (0.036 * face["brow"], 0.012, 0.009), rot=(0, 0, 8 if x > 0 else -8))
-        b.sphere("Head", "SKIN", (x * 2.35, 0.0, 1.665), (0.016, 0.03, 0.035), segs=(8, 6))  # ears
-    build_hair(b, recipe["hair"])
-
+    P = {}  # region -> primitives
+    P["torso"] = [
+        Ellipsoid((0, 0.012, 0.95), (0.158 * wa, 0.105, 0.11), "Hips", "pelvis"),
+        Ellipsoid((0, 0, 1.09), (0.142 * wa, 0.092, 0.13), "Spine", "waist"),
+        Ellipsoid((0, -0.004, 1.27), (0.163 * ch, 0.104, 0.15), "Chest", "ribs"),
+        Ellipsoid((0.062, -0.058, 1.33), (0.072 * ch, 0.042, 0.062), "Chest", "pec"),
+        Ellipsoid((-0.062, -0.058, 1.33), (0.072 * ch, 0.042, 0.062), "Chest", "pec"),
+        Capsule((-0.17 * sh, 0.012, 1.428), (0.17 * sh, 0.012, 1.428), 0.066, 0.066, "Chest", "traps"),
+    ]
+    P["glutes"] = [Ellipsoid((x, 0.05, 0.9), (0.082 * wa, 0.075, 0.09), "Hips", "glute") for x in (-0.074, 0.074)]
+    P["neck"] = [Capsule((0, 0.008, 1.43), (0, 0.0, 1.585), 0.062, 0.054, "Neck", "neck")]
+    P["head"] = [
+        Ellipsoid((0, 0.014, 1.69), (0.087 * face["cheeks"], 0.102, 0.112), "Head", "cranium"),
+        Ellipsoid((0, -0.028, 1.632), (0.07 * face["jaw"], 0.074, 0.07), "Head", "jaw"),
+        Ellipsoid((0, -0.07, 1.585), (0.034 * face["jaw"], 0.03, 0.03), "Head", "chin"),
+        Ellipsoid((0, -0.097, 1.652), (0.015, 0.024 * face["nose"], 0.03 * face["nose"]), "Head", "nose", rot=(18, 0, 0)),
+        Ellipsoid((0, -0.082, 1.706), (0.068 * face["brow"], 0.026, 0.018), "Head", "brow"),
+        Ellipsoid((0.046, -0.07, 1.655), (0.03, 0.026, 0.024), "Head", "cheek"),
+        Ellipsoid((-0.046, -0.07, 1.655), (0.03, 0.026, 0.024), "Head", "cheek"),
+        Ellipsoid((0.087, 0.01, 1.665), (0.013, 0.026, 0.033), "Head", "ear"),
+        Ellipsoid((-0.087, 0.01, 1.665), (0.013, 0.026, 0.033), "Head", "ear"),
+    ]
     for side, sx in (("L", 1), ("R", -1)):
-        # Arms: short sleeve, skin forearm, hand.
-        b.sphere(f"UpperArm.{side}", "KIT_SHIRT", (0.2 * sx * sh, 0, 1.415), (0.075 * li, 0.075 * li, 0.07))
-        b.tube(f"UpperArm.{side}", "KIT_SHIRT", (0.21 * sx * sh, 0, 1.43), (0.225 * sx * sh, 0, 1.25), 0.07 * li, 0.06 * li)
-        b.tube(f"UpperArm.{side}", "SKIN", (0.225 * sx * sh, 0, 1.26), (0.24 * sx * sh, 0, 1.14), 0.047 * li, 0.042 * li)
-        b.tube(f"LowerArm.{side}", "SKIN", (0.24 * sx * sh, 0, 1.15), (0.25 * sx * sh, 0, 0.9), 0.042 * li, 0.032 * li)
-        b.sphere(f"Hand.{side}", "SKIN", (0.252 * sx * sh, -0.005, 0.85), (0.03, 0.045, 0.06))
-        # Legs: shorts, thigh, sock-covered shin, boot.
-        x = 0.1 * sx
-        b.tube(f"UpperLeg.{side}", "KIT_SHORTS", (x, 0, 0.98), (x, 0, 0.72), 0.095 * li, 0.085 * li)
-        b.tube(f"UpperLeg.{side}", "SKIN", (x, 0, 0.73), (x, 0, 0.52), 0.07 * li, 0.055 * li)
-        b.tube(f"LowerLeg.{side}", "SKIN", (x, 0, 0.53), (x, 0, 0.44), 0.052 * li, 0.055 * li)
-        b.tube(f"LowerLeg.{side}", "KIT_SOCKS", (x, 0.005, 0.45), (x, 0, 0.1), 0.057 * li, 0.036)
-        blen, bh = 0.26 * boot["length"], 0.07 * boot["height"]
-        b.sphere(f"Foot.{side}", "BOOTS", (x, -0.06, bh * 0.62), (0.045, blen * 0.5, bh * 0.55), segs=(12, 8))
-        b.sphere(f"Foot.{side}", "BOOTS", (x, 0.005, bh * 0.9), (0.042, 0.06, bh * 0.6), segs=(10, 6))  # heel/ankle
-        b.box(f"Foot.{side}", "BOOTS", (x, -0.06, 0.008), (0.08, blen * 0.97, 0.016))  # sole
-    # Shorts waist.
-    b.tube("Hips", "KIT_SHORTS", (0, 0, 0.84), (0, 0, 1.03), 0.18 * wa, 0.165 * wa, sx=1.12, sy=0.8)
+        P["delt." + side] = [Ellipsoid((0.202 * sx * sh, 0, 1.39), (0.068 * li, 0.072, 0.082), f"UpperArm.{side}", "delt")]
+        P["upperarm." + side] = [
+            Capsule((0.208 * sx * sh, 0, 1.39), (0.232 * sx * sh, 0.004, 1.16), 0.057 * li, 0.046 * li, f"UpperArm.{side}", "upperarm"),
+            Ellipsoid((0.222 * sx * sh, -0.018, 1.285), (0.046 * li, 0.05 * li, 0.085), f"UpperArm.{side}", "biceps"),
+        ]
+        P["forearm." + side] = [
+            Capsule((0.234 * sx * sh, 0.004, 1.15), (0.246 * sx * sh, -0.004, 0.925), 0.047 * li, 0.032, f"LowerArm.{side}", "forearm"),
+        ]
+        P["hand." + side] = [
+            Ellipsoid((0.25 * sx * sh, -0.004, 0.858), (0.021, 0.04, 0.058), f"Hand.{side}", "hand"),
+            Ellipsoid((0.244 * sx * sh, -0.034, 0.878), (0.012, 0.014, 0.03), f"Hand.{side}", "thumb", rot=(-20, 0, 0)),
+        ]
+        P["thigh." + side] = [
+            Capsule((0.094 * sx, 0.004, 0.93), (0.1 * sx, -0.004, 0.53), 0.09 * li, 0.06 * li, f"UpperLeg.{side}", "thigh"),
+            Ellipsoid((0.102 * sx, -0.03, 0.72), (0.072 * li, 0.062 * li, 0.15), f"UpperLeg.{side}", "quad"),
+        ]
+        P["shin." + side] = [
+            Ellipsoid((0.1 * sx, -0.018, 0.515), (0.05, 0.05, 0.05), f"LowerLeg.{side}", "knee"),
+            Ellipsoid((0.1 * sx, 0.028, 0.37), (0.058 * li, 0.06 * li, 0.115), f"LowerLeg.{side}", "calf"),
+            Capsule((0.1 * sx, 0.0, 0.5), (0.1 * sx, 0.006, 0.09), 0.048 * li, 0.031, f"LowerLeg.{side}", "shin"),
+        ]
+        blen = boot["length"]
+        P["foot." + side] = [
+            Ellipsoid((0.1 * sx, -0.062 * blen, 0.042), (0.043, 0.118 * blen, 0.042), f"Foot.{side}", "foot"),
+            Ellipsoid((0.1 * sx, 0.018, 0.052), (0.037, 0.04, 0.048), f"Foot.{side}", "heel"),
+        ]
+    return P
 
 
-def build_hair(b, style):
-    """Stylised hair volumes, no strands: closer to the era and to the camera."""
+def group(P, *keys):
+    out = []
+    for k in keys:
+        out += P[k + ".L"] + P[k + ".R"] if k + ".L" in P else P[k]
+    return out
+
+
+def build_meshes(recipe, lib, scale):
+    """Returns [(name, mesh, prims_for_skinning, material_names, rigid_bone)].
+    "Body" must come first: clothes copy their skin weights from it."""
+    s = scale
+    A = {k: [p.scaled(s) for p in v] for k, v in anatomy(recipe, lib).items()}
+    all_prims = [p for v in A.values() for p in v]
+    body_prims = [p for k, v in A.items() if k != "head" for p in v]
+    out = []
+
+    # Body (neck down): one continuous organic surface.
+    body = fuse("Body", body_prims, voxel=0.009 * s, max_tris=30000)
+    _assign_body_materials(body, body_prims, s)
+    out.append(("Body", body, body_prims, ["SKIN", "KIT_SOCKS", "BOOTS"], None))
+
+    # Head: finer voxel so the face keeps its features. Its neck sleeve sits
+    # 1.5 mm outside the body's neck to hide the joint.
+    head_prims = A["head"] + [p.inflated(0.0015 * s) for p in A["neck"]]
+    head = fuse("Head", head_prims, voxel=0.004 * s, smooth=(0.5, 3), max_tris=9000)
+    cut(head, lambda co: 1.485 * s - co.z)
+    out.append(("Head", head, head_prims + A["torso"], ["SKIN"], None))
+
+    # Shirt: torso shell + one tube per sleeve (separate shells, so no web
+    # between arm and torso), cut open at hem, collar and cuffs.
+    torso = fuse("Shirt_Torso", [p.inflated(0.02 * s) for p in A["torso"] + A["glutes"]]
+                 + [p.inflated(0.016 * s) for p in group(A, "delt")], voxel=0.011 * s, smooth=(0.6, 10), max_tris=6000)
+
+    def torso_sdf(co):
+        f = SHIRT_HEM * s - co.z
+        if co.z > 1.43 * s:
+            f = max(f, 0.075 * s - math.hypot(co.x, co.y + 0.005 * s))
+        return f
+    cut(torso, torso_sdf)
+    for sleeves, parts, cut_t in (("Short", ("upperarm",), 0.55), ("Long", ("upperarm", "forearm"), 0.93)):
+        meshes = [torso.copy()]
+        for side in ("L", "R"):
+            arm = []
+            for part in parts:
+                arm += [p.inflated(0.014 * s, 0.02 * s) if isinstance(p, Capsule) else p.inflated(0.012 * s)
+                        for p in A[f"{part}.{side}"]]
+            tube = fuse(f"Sleeve_{side}", arm, voxel=0.009 * s, smooth=(0.6, 8), max_tris=1800)
+            cap = [p for p in arm if isinstance(p, Capsule)][-1]
+            axis = cap.b - cap.a
+            end = cap.a + axis * (cut_t if len(parts) == 1 or cap.region == parts[-1] else 1.0)
+            cut(tube, lambda co, end=end, n=axis.normalized(): (co - end).dot(n))
+            meshes.append(tube)
+        shirt = join(f"Shirt_{sleeves}", meshes)
+        cylindrical_uv(shirt, SHIRT_HEM * s, 1.5 * s,
+                       collar=lambda co: co.z > 1.44 * s and math.hypot(co.x, co.y + 0.005 * s) < 0.092 * s)
+        out.append((f"Shirt_{sleeves}", shirt, all_prims, ["KIT_SHIRT"], None))
+    bpy.data.meshes.remove(torso)
+
+    # Shorts: loose around pelvis and thighs, open at waist and legs.
+    shorts_prims = [A["torso"][0].inflated(0.022 * s), A["torso"][1].inflated(0.016 * s)]
+    shorts_prims += [p.inflated(0.022 * s) for p in A["glutes"]]
+    shorts_prims += [p.inflated(0.02 * s, 0.034 * s) if isinstance(p, Capsule) else p.inflated(0.024 * s)
+                     for p in group(A, "thigh")]
+    shorts = fuse("Shorts", shorts_prims, voxel=0.01 * s, smooth=(0.6, 10), max_tris=7000)
+    cut(shorts, lambda co: max(co.z - SHORTS_TOP * s, SHORTS_HEM * s - co.z))
+    planar_uv(shorts)
+    out.append(("Shorts", shorts, all_prims, ["KIT_SHORTS"], None))
+
+    # Boots: low-cut shells over the feet.
+    boots = fuse("Boots", [p.inflated(0.009 * s) for p in group(A, "foot")], voxel=0.006 * s, max_tris=3000)
+    cut(boots, lambda co: co.z - BOOT_TOP * s)
+    planar_uv(boots)
+    out.append(("Boots", boots, all_prims, ["BOOTS"], None))
+
+    hair = build_hair(recipe["hair"], A["head"], s)
+    if hair is not None:
+        out.append(("Hair", hair, all_prims, ["HAIR"], "Head"))
+    out.append(("Face", build_face(lib["faces"][recipe["face"]], s), all_prims, ["EYES", "HAIR"], "Head"))
+    return out
+
+
+def _assign_body_materials(mesh, prims, s):
+    """Socks are painted on the shins (tight fabric); feet are hidden by boots."""
+    socks, boots = MATERIALS_BODY.index("KIT_SOCKS"), MATERIALS_BODY.index("BOOTS")
+    for poly in mesh.polygons:
+        c = poly.center
+        bone = nearest(prims, c).bone
+        if bone.startswith("Foot") or c.z < BOOT_TOP * 0.8 * s:
+            poly.material_index = boots
+        elif bone.startswith("LowerLeg") and c.z < SOCK_TOP * s:
+            poly.material_index = socks
+        poly.use_smooth = True
+
+
+MATERIALS_BODY = ["SKIN", "KIT_SOCKS", "BOOTS"]
+
+
+def build_hair(style, head, s):
+    """Stylised hair volumes (no strands) cut along a hairline."""
     if style == 0:
-        return
-    if style == 1:    # short
-        b.sphere("Head", "HAIR", (0, 0.008, 1.705), (0.104, 0.118, 0.105))
-    elif style == 2:  # buzz
-        b.sphere("Head", "HAIR", (0, 0.004, 1.695), (0.1, 0.115, 0.108))
-    elif style == 3:  # long
-        b.sphere("Head", "HAIR", (0, 0.008, 1.705), (0.108, 0.122, 0.11))
-        b.sphere("Head", "HAIR", (0, 0.055, 1.6), (0.1, 0.07, 0.12))
-    elif style == 4:  # afro
-        b.sphere("Head", "HAIR", (0, 0.015, 1.73), (0.135, 0.145, 0.125))
-    elif style == 5:  # mohawk
-        b.sphere("Head", "HAIR", (0, 0.004, 1.69), (0.099, 0.114, 0.104))
-        b.box("Head", "HAIR", (0, 0.0, 1.8), (0.03, 0.2, 0.06))
+        return None
+    cranium = head[0]
+    thick = {1: 0.011, 2: 0.006, 3: 0.014, 4: 0.04, 5: 0.008}[style] * s
+    prims = [cranium.inflated(thick)]
+    if style == 3:  # long: volume down the back of the neck
+        prims.append(Ellipsoid(cranium.c + Vector((0, 0.05, -0.085)) * s, Vector((0.085, 0.06, 0.1)) * s, "Head"))
+    if style == 4:  # afro: a round volume sitting high on the head
+        prims = [cranium.inflated(0.02 * s),
+                 Ellipsoid(cranium.c + Vector((0, 0.018, 0.05)) * s, Vector((0.122, 0.13, 0.105)) * s, "Head")]
+    mesh = fuse("Hair", prims, voxel=0.006 * s, smooth=(0.5, 3), max_tris=7000)
+    cz, cy = cranium.c.z, cranium.c.y
+
+    def hairline_sdf(co):
+        rel_z, rel_y = (co.z - cz) / s, (co.y - cy) / s
+        # Hairline: high on the forehead, lower at the back, above the ears.
+        front = min(1.0, max(0.0, -rel_y) / 0.1)
+        line = 0.035 * front - 0.06 * (1 - front)
+        if abs(co.x) > 0.072 * s and rel_y < 0.03:
+            line = max(line, -0.005)  # sideburns stop above the ears
+        if style == 3:
+            line -= 0.06 * max(0.0, rel_y / 0.1)
+        if style == 4:
+            line = 0.03 * front - 0.02 * (1 - front)
+        f = (line - rel_z) * s
+        if style == 5:
+            f = max(f, abs(co.x) - 0.026 * s)  # mohawk strip
+        return f
+    cut(mesh, hairline_sdf)
+    planar_uv(mesh)
+    return mesh
+
+
+def build_face(face, s):
+    """Eyes and brows: tiny separate pieces so they stay crisp."""
+    bm = bmesh.new()
+    for x in (-0.034, 0.034):
+        e = Ellipsoid((x, -0.083, 1.678), (0.012, 0.007, 0.0085), "Head")
+        e.scaled(s).add_to(bm)
+    eyes_count = len(bm.faces)
+    for x in (-0.035, 0.035):
+        b = Ellipsoid((x, -0.095, 1.703), (0.024 * face["brow"], 0.007, 0.0055), "Head", rot=(0, 0, -7 if x > 0 else 7))
+        b.scaled(s).add_to(bm)
+    bm.faces.ensure_lookup_table()
+    for i, f in enumerate(bm.faces):
+        f.material_index = 0 if i < eyes_count else 1
+        f.smooth = True
+    mesh = bpy.data.meshes.new("Face")
+    bm.to_mesh(mesh)
+    bm.free()
+    planar_uv(mesh)
+    return mesh
 
 
 def make_materials(recipe, lib):
-    """The 'look' recipe: flat-ish base color, high roughness, moderate specular."""
+    """The 'look' recipe: flat-ish base colour, high roughness, moderate specular."""
     colors = {
         "SKIN": hex_color(lib["skin_tones"][recipe["skin"]]),
         "KIT_SHIRT": hex_color("#bbbbbb"),
@@ -227,10 +319,10 @@ def make_materials(recipe, lib):
         "KIT_SOCKS": hex_color("#bbbbbb"),
         "BOOTS": hex_color(recipe.get("boot_color", "#111111")),
         "HAIR": hex_color(lib["hair_colors"][recipe["hair_color"]]),
-        "EYES": hex_color("#1a1a1a"),
+        "EYES": hex_color("#161210"),
     }
-    roughness = {"SKIN": 0.65, "KIT_SHIRT": 0.8, "KIT_SHORTS": 0.8, "KIT_SOCKS": 0.85, "BOOTS": 0.35, "HAIR": 0.75, "EYES": 0.3}
-    mats = []
+    roughness = {"SKIN": 0.62, "KIT_SHIRT": 0.82, "KIT_SHORTS": 0.8, "KIT_SOCKS": 0.88, "BOOTS": 0.32, "HAIR": 0.8, "EYES": 0.25}
+    mats = {}
     for name in MATERIALS:
         m = bpy.data.materials.new(name)
         m.use_nodes = True
@@ -238,7 +330,7 @@ def make_materials(recipe, lib):
         bsdf.inputs["Base Color"].default_value = colors[name]
         bsdf.inputs["Roughness"].default_value = roughness[name]
         bsdf.inputs["Specular IOR Level"].default_value = 0.35
-        mats.append(m)
+        mats[name] = m
     return mats
 
 
@@ -412,15 +504,29 @@ def generate(recipe_id):
     scale = recipe["height"] / BASE_HEIGHT
 
     arm = build_armature(scale)
-    builder = BodyBuilder(scale)
-    build_body(builder, recipe, lib)
-    body = builder.build("Body")
-    for m in make_materials(recipe, lib):
-        body.data.materials.append(m)
-    bpy.context.scene.collection.objects.link(body)
-    body.parent = arm
-    mod = body.modifiers.new("Skeleton", "ARMATURE")
-    mod.object = arm
+    skeleton = {n: (Vector(h) * scale, Vector(t) * scale, p) for n, (h, t, p) in SKELETON.items()}
+    mats = make_materials(recipe, lib)
+    report = []
+    body_obj = None
+    for name, mesh, prims, mat_names, rigid in build_meshes(recipe, lib, scale):
+        for m in mat_names:
+            mesh.materials.append(mats[m])
+        for poly in mesh.polygons:
+            poly.use_smooth = True
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = arm
+        obj.modifiers.new("Skeleton", "ARMATURE").object = arm
+        if name == "Body":
+            skin(obj, prims, skeleton)
+            body_obj = obj
+        elif name == "Head":
+            skin(obj, prims, skeleton)
+        elif rigid:
+            skin(obj, prims, skeleton, rigid=rigid)
+        else:
+            transfer_weights(obj, body_obj, skeleton)
+        report.append(f"{name} {tris(mesh)}")
 
     build_actions(arm, scale, clips)
 
@@ -430,8 +536,8 @@ def generate(recipe_id):
         filepath=path, export_format="GLB", export_animations=True,
         export_animation_mode="ACTIONS", export_force_sampling=True,
         export_apply=False, export_yup=True)
-    tris = sum(len(p.vertices) - 2 for p in body.data.polygons)
-    print(f"[player_generator] {recipe_id}: {tris} tris, {len(clips['clips'])} clips -> {os.path.relpath(path, ROOT)}")
+    print(f"[player_generator] {recipe_id}: {', '.join(report)} tris; {len(clips['clips'])} clips -> "
+          f"{os.path.relpath(path, ROOT)}")
     return path
 
 
