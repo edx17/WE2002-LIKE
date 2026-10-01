@@ -42,6 +42,8 @@ func _run() -> void:
 	await _test_human_shot_flow()
 	await _test_generated_model()
 	await _test_ai_match_soak()
+	await _test_5v5_soak()
+	await _test_player_switch()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -364,3 +366,78 @@ func _test_ai_match_soak() -> void:
 	check(m.score[0] + m.score[1] + restarts.size() > 1, "el partido fluye (goles/reanudaciones)")
 	m.queue_free()
 	await _frames(1)
+
+
+func _test_5v5_soak() -> void:
+	print("Simulación: 5v5 IA contra IA, 120 s (comportamiento de equipo)")
+	var m := _new_match("stage2_5v5")
+	var swarm := 0.0
+	var spacing := 0.0
+	var keeper_wander := 0
+	var frames := 120 * 120
+	for i in frames:
+		await physics_frame
+		var b := m.ball.global_position
+		for p in m.players:
+			if not p.is_keeper and p.global_position.distance_to(b) < 4.0:
+				swarm += 1.0
+			if p.is_keeper and absf(p.global_position.x + p.attack_dir * PitchBuilder.HALF_LENGTH) > 18.0:
+				keeper_wander += 1
+		var pts: Array[Vector3] = []
+		for p in m.players:
+			if p.team == 0 and not p.is_keeper:
+				pts.append(p.global_position)
+		var sum := 0.0
+		for a in pts.size():
+			for c in range(a + 1, pts.size()):
+				sum += pts[a].distance_to(pts[c])
+		spacing += sum / 6.0
+	print("       goles %d-%d, %s" % [m.score[0], m.score[1], m.stats])
+	check(swarm / frames < 3.0, "no hay enjambre: %.1f jugadores de campo a menos de 4 m de la pelota" % (swarm / frames))
+	check(spacing / frames > 12.0, "el equipo mantiene la forma: %.1f m entre compañeros" % (spacing / frames))
+	check(keeper_wander == 0, "los arqueros no abandonan su zona")
+	check(m.stats.passes_completed >= 15, "se completan pases entre compañeros (%d de %d)" % [m.stats.passes_completed, m.stats.passes])
+	check(m.stats.shots >= 3, "hay remates (%d)" % m.stats.shots)
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_player_switch() -> void:
+	print("Cambio de jugador")
+	var m := MATCH_SCENE.instantiate() as MatchController
+	m.match_id = "stage2_5v5"
+	root.add_child(m)
+	await _frames(2)
+	var first := m.human
+	check(first != null and not first.is_keeper and first.input_source is HumanInput, "el humano controla a un jugador de campo")
+	m.switch_to_nearest()
+	check(m.human != null and m.human.input_source is HumanInput and first.input_source is PlayerAI,
+		"cambiar de jugador mueve el control y devuelve la IA al anterior")
+	# A pass to a team-mate hands the pad to the receiver.
+	var passer := m.human
+	var mate: PlayerController = null
+	for p in m.teammates_of(passer):
+		if not p.is_keeper:
+			mate = p
+			break
+	m.rng.seed = 5
+	# Everyone else stands still, out of the way: only the pass is under test.
+	for o in m.players:
+		if o != passer:
+			o.input_source = null
+			o.teleport(Vector3(o.global_position.x, 0, 25.0 if o.team == 1 else -25.0), Vector3.RIGHT)
+	passer.teleport(Vector3(-5, 0, 0), Vector3.RIGHT)
+	mate.teleport(Vector3(8, 0, 0), Vector3.LEFT)
+	m.ball.place(Vector3(-4.45, Ball.RADIUS, 0))
+	var input := ScriptedInput.new()
+	passer.input_source = input
+	await _frames(20)
+	input.move = Vector2.RIGHT
+	input.charge = 0.4
+	input.release = PlayerIntent.Action.PASS
+	await _frames(40)  # windup + contact
+	check(m.human == mate, "al pasar, el control pasa al receptor (%s → %s, controla %s, patada %d)" % [
+		passer.name, mate.name, m.human.name, passer.last_kick_type])
+	m.queue_free()
+	await _frames(1)
+

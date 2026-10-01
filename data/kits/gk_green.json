@@ -1,0 +1,12 @@
+{
+  "id": "gk_green",
+  "pattern": "plain",
+  "sleeves": "long",
+  "primary": "#3fae4a",
+  "secondary": "#1f6a2a",
+  "collar": "#1f6a2a",
+  "shorts": "#1a1a1a",
+  "socks": "#3fae4a",
+  "number": "#111111",
+  "number_outline": "#bfeec4"
+}

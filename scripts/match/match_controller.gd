@@ -18,7 +18,7 @@ signal restarted(kind: String)
 ##   godot -- --match=stage0_solo
 ##   godot -- --attract          (every player driven by AI)
 ##   godot -- --zoom=0           (camera zoom level: 0 close, 1 normal, 2 wide)
-@export var match_id := "stage1_1v1"
+@export var match_id := "stage2_5v5"
 ## Disable to drive every player from AI/scripts (tests, attract mode).
 @export var allow_human := true
 
@@ -33,6 +33,15 @@ var phase: int = Phase.PLAYING
 var clock := 0.0
 var direction_steps := 8
 var last_kick_text := ""
+## One TeamBrain per team when the match setup gives formations (5v5+).
+var brains: Array = [null, null]
+
+var _last_receiver: PlayerController = null
+## Running match statistics (HUD, tests, tuning).
+var stats := {"saves": 0, "passes": 0, "passes_completed": 0, "shots": 0}
+var _pending_pass: PlayerController = null
+## Team-mate a pass in flight is meant for (he comes to meet it), or null.
+var pass_receiver: PlayerController = null
 
 var _stop_timer := 0.0
 var _restart := Callable()
@@ -86,8 +95,20 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 	var kit_data: Variant = DataLoader.load_json("kits/%s.json" % team.get("kit", "")) if team.has("kit") else null
 	if kit_data is Dictionary:
 		kit = kit_data
+	var gk_kit: Dictionary = kit
+	var gk_data: Variant = DataLoader.load_json("kits/%s.json" % team.get("gk_kit", "")) if team.has("gk_kit") else null
+	if gk_data is Dictionary:
+		gk_kit = gk_data
+	var formation_id := str(entry.get("formation", ""))
+	var brain: TeamBrain = null
+	if formation_id != "":
+		brain = TeamBrain.new(self, index, Formation.load_id(formation_id))
+		brain.attack_dir = attack
+		brains[index] = brain
 	var player_scene := load(PLAYER_SCENE_PATH) as PackedScene
-	for pe: Dictionary in entry.get("players", []):
+	var entries: Array = entry.get("players", [])
+	for slot in entries.size():
+		var pe: Dictionary = entries[slot]
 		var p := player_scene.instantiate() as PlayerController
 		p.stats = DataLoader.load_player(str(pe.get("id", "")))
 		p.name = "%s_%s" % [team.get("short", "T%d" % index), p.stats.id]
@@ -95,21 +116,26 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		p.attack_dir = attack
 		var home: Array = pe.get("home", [0, 0])
 		p.home_position = Vector3(float(home[0]), 0.0, float(home[1]))
+		p.role = str(pe.get("role", brain.formation.role(slot) if brain != null else p.stats.position))
+		p.is_keeper = p.role == "GK"
 		p.match_ctx = self
 		p.ball = ball
 		p.direction_steps = direction_steps
 		add_child(p)
 		p.set_colors(primary, secondary)
-		PlayerModel.attach(p, p.stats.appearance, kit, p.stats.number)
+		PlayerModel.attach(p, p.stats.appearance, gk_kit if p.is_keeper else kit, p.stats.number)
 		p.kicked.connect(_on_kicked)
+		p.ai = PlayerAI.new()
+		p.ai.rng.seed = rng.randi()
+		if brain != null:
+			brain.players.append(p)
+			p.home_position = brain.kickoff_position(p)
 		var control := str(pe.get("control", "ai"))
 		if control == "human" and allow_human and human == null:
 			p.input_source = HumanInput.new()
 			human = p
 		elif control != "none":
-			var ai := PlayerAI.new()
-			ai.rng.seed = rng.randi()
-			p.input_source = ai
+			p.input_source = p.ai
 		p.set_human(p == human)
 		players.append(p)
 
@@ -122,13 +148,20 @@ func _physics_process(delta: float) -> void:
 			_restart.call()
 		return
 	clock += delta
+	for brain: TeamBrain in brains:
+		if brain != null:
+			brain.update(delta)
 	referee.update(delta)
+	if ball.owner_player != null:
+		pass_receiver = null
 	_check_ball_out()
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(&"toggle_directions"):
 		set_direction_steps(16 if direction_steps == 8 else 8)
+	elif event.is_action_pressed(&"switch_player"):
+		switch_to_nearest()
 	elif event.is_action_pressed(&"camera_zoom"):
 		camera.cycle_zoom()
 	elif event.is_action_pressed(&"reset_match"):
@@ -205,12 +238,16 @@ func _stop(message: String, seconds: float, restart: Callable) -> void:
 func kickoff(team: int) -> void:
 	phase = Phase.PLAYING
 	ball.place(Vector3(0, Ball.RADIUS, 0))
-	var taker := _first_of(team)
+	var taker := _kickoff_taker(team)
 	for p in players:
 		p.frozen = false
-		p.teleport(p.home_position, Vector3.RIGHT * p.attack_dir)
+		var home := p.home_position
+		if brains[p.team] != null:
+			home = (brains[p.team] as TeamBrain).kickoff_position(p)
+		p.teleport(home, Vector3.RIGHT * p.attack_dir)
 	if taker != null:
 		taker.teleport(Vector3(-0.6 * taker.attack_dir, 0, 0), Vector3.RIGHT * taker.attack_dir)
+		_give_control(taker)
 	camera.snap()
 	restarted.emit("SAQUE INICIAL")
 
@@ -220,7 +257,7 @@ func _restart_at(team: int, spot: Vector3, kind: String) -> void:
 	var into_pitch := DirectionResolver.flat(-spot).normalized()
 	if into_pitch == Vector3.ZERO:
 		into_pitch = Vector3.RIGHT
-	var taker := _nearest_of(team, spot)
+	var taker := _restart_taker(team, spot, kind)
 	for p in players:
 		p.frozen = false
 		if p.is_grounded_state() or p.state == PlayerController.State.CELEBRATE:
@@ -233,29 +270,84 @@ func _restart_at(team: int, spot: Vector3, kind: String) -> void:
 				p.teleport(spot + push * 5.0, -push)
 	if taker != null:
 		taker.teleport(spot - into_pitch * 0.55, into_pitch)
+		_give_control(taker)
 	restarted.emit(kind)
 
 
-func _first_of(team: int) -> PlayerController:
-	if human != null and human.team == team:
-		return human
-	for p in players:
-		if p.team == team:
-			return p
-	return null
-
-
-func _nearest_of(team: int, pos: Vector3) -> PlayerController:
-	if human != null and human.team == team:
-		return human
+## Kick-off: the most advanced outfield player (the forward) takes it.
+func _kickoff_taker(team: int) -> PlayerController:
 	var best: PlayerController = null
 	for p in players:
-		if p.team == team and (best == null or p.global_position.distance_to(pos) < best.global_position.distance_to(pos)):
+		if p.team != team or p.is_keeper:
+			continue
+		if best == null or p.home_position.x * p.attack_dir > best.home_position.x * best.attack_dir:
+			best = p
+	if best == null and human != null and human.team == team:
+		return human
+	return best
+
+
+## Goal kicks go to the keeper; everything else to the nearest outfield player.
+func _restart_taker(team: int, pos: Vector3, kind: String) -> PlayerController:
+	var best: PlayerController = null
+	for p in players:
+		if p.team != team:
+			continue
+		if kind == "SAQUE DE ARCO" and p.is_keeper:
+			return p
+		if p.is_keeper and players.size() > 2:
+			continue
+		if best == null or p.global_position.distance_to(pos) < best.global_position.distance_to(pos):
 			best = p
 	return best
 
 
+# --- human control ----------------------------------------------------------------
+
+## Moves the pad to another player of the human's team (never the keeper).
+func set_human(p: PlayerController) -> void:
+	if human == null or p == null or p == human or p.team != human.team or p.is_keeper:
+		return
+	var pad := human.input_source
+	human.input_source = human.ai
+	human.set_human(false)
+	human = p
+	human.input_source = pad
+	human.set_human(true)
+
+
+func _give_control(p: PlayerController) -> void:
+	if human != null and p.team == human.team:
+		set_human(p)
+
+
+## Manual switch (Q / LB): the team-mate closest to the ball.
+func switch_to_nearest() -> void:
+	if human == null:
+		return
+	var best: PlayerController = null
+	for p in teammates_of(human):
+		if p.is_keeper:
+			continue
+		if best == null or p.global_position.distance_to(ball.global_position) < best.global_position.distance_to(ball.global_position):
+			best = p
+	set_human(best)
+
+
 # --- queries used by players and AI --------------------------------------------
+
+func brain_for(team: int) -> TeamBrain:
+	return brains[team] as TeamBrain
+
+
+func is_keeper(p: PlayerController) -> bool:
+	return p.is_keeper
+
+
+## Inside the penalty area at the goal on `goal_side` (+1 = goal at +X).
+func in_penalty_area(pos: Vector3, goal_side: float) -> bool:
+	return pos.x * signf(goal_side) > PitchBuilder.HALF_LENGTH - 16.5 and absf(pos.z) < 20.16
+
 
 ## Centre of the goal a team attacking towards `attack_dir` shoots at.
 func goal_center(attack_dir: float) -> Vector3:
@@ -332,6 +424,7 @@ func pass_target(p: PlayerController, type: int, dir: Vector3, power: float) -> 
 		if s > best_score:
 			best_score = s
 			best = mate
+	_last_receiver = best
 	if best != null:
 		var lead := 0.35
 		var target := best.global_position + DirectionResolver.flat(best.velocity) * lead
@@ -351,10 +444,32 @@ func pass_target(p: PlayerController, type: int, dir: Vector3, power: float) -> 
 
 func _on_kicked(p: PlayerController, type: int, result: KickSolver.KickResult) -> void:
 	last_kick_text = "%s: %s" % [p.stats.name, result.describe(type)]
+	if type == KickSolver.KickType.SHOT:
+		stats.shots += 1
+	elif type != KickSolver.KickType.HEADER:
+		stats.passes += 1
+		_pending_pass = p
+	pass_receiver = _last_receiver if type != KickSolver.KickType.SHOT and _last_receiver != null \
+		and _last_receiver.team == p.team else null
+	# WE: control follows the pass to its receiver.
+	if p == human and type != KickSolver.KickType.SHOT and _last_receiver != null and _last_receiver.team == p.team:
+		set_human(_last_receiver)
 	if result.mishit and p == human:
 		hud.flash("¡LE PEGÓ MAL!", 0.8, false)
 
 
+func on_keeper_save(keeper: PlayerController, caught: bool) -> void:
+	stats.saves += 1
+	hud.flash("¡ATAJADA DE %s!" % keeper.stats.name.to_upper() if caught else "¡DESPEJA %s!" % keeper.stats.name.to_upper(), 1.0, false)
+
+
 func on_ball_received(p: PlayerController, zone: int, quality: float) -> void:
+	if _pending_pass != null:
+		if _pending_pass.team == p.team and _pending_pass != p:
+			stats.passes_completed += 1
+		_pending_pass = null
+	# A team-mate controls the ball: the pad goes to him.
+	if human != null and p.team == human.team and p != human and not p.is_keeper:
+		set_human(p)
 	if p == human and quality < 0.5:
 		hud.flash("CONTROL CON %s… DEFECTUOSO" % BallInteraction.ZONE_NAMES[zone], 0.7, false)

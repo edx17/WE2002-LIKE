@@ -12,8 +12,8 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 | Etapa | Contenido | Estado |
 |---|---|---|
 | **0** Dos muñecos y una pelota | campo, jugador, pelota, cámara: correr → controlar → girar → patear | ✅ jugable (`--match=stage0_solo`) |
-| **1** 1 vs 1 | control, pase, remate, recuperación, choque, quite, barrida, cambio de dirección, balón dividido | ✅ jugable (por defecto) |
-| **2** 5 vs 5 | IA de posicionamiento, marcaje, apoyo, transiciones | ⏳ la IA ya tiene los modos, falta formación |
+| **1** 1 vs 1 | control, pase, remate, recuperación, choque, quite, barrida, cambio de dirección, balón dividido | ✅ jugable (`--match=stage1_1v1`) |
+| **2** 5 vs 5 | formación en JSON, bloque que se desplaza, presión de un solo jugador, cobertura, marca, apoyo, desmarque, pases entre IA, arqueros, cambio de jugador | ✅ jugable (por defecto) |
 | **3** 11 vs 11 | formación, roles, táctica, presión, línea defensiva, offside, pelota parada | ⏳ |
 | **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay lateral, córner, saque de arco y falta simplificados |
 | Assets | pipeline receta JSON → Blender → GLB → Godot. Estilo **classic** (diseño WE2002: cuadrado, low-poly, cara pintada) por defecto y **modern** (esculpido) opcional. Dorsales, escudo, manga corta/larga, 13 clips | 🟡 jugadores generados; animaciones procedurales |
@@ -26,7 +26,8 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 2. O por línea de comandos:
 
 ```bash
-godot --path .                          # 1v1 contra la IA
+godot --path .                          # 5v5 contra la IA
+godot --path . -- --match=stage1_1v1    # 1v1
 godot --path . -- --match=stage0_solo   # etapa 0: solo vos y la pelota
 godot --path . -- --attract             # IA contra IA
 ```
@@ -41,6 +42,7 @@ godot --path . -- --attract             # IA contra IA
 | Remate | K | X |
 | Pase filtrado | I | Y |
 | Globo / centro | L | B |
+| Cambiar de jugador | Q | LB |
 | **Sin pelota, rival la tiene:** mantener PASE = presionar · tocar PASE = quite · REMATE = barrida | | |
 | **Sin pelota, pelota suelta:** soltar cualquier botón = acción **de primera** al llegar la pelota | | |
 | 8 ↔ 16 direcciones | F2 | click stick izq. |
@@ -119,6 +121,26 @@ docs/     INGENIERIA_INVERSA.md  PIPELINE_ASSETS.md
   *lead* hacia donde ataca el poseedor. `lead_speed` controla cuánto tarda en girar al
   cambiar la posesión: ahí se juega buena parte de la sensación.
 
+## Etapa 2: cómo juega el equipo
+
+- **Formación como datos** (`data/formations/5v5_rombo.json`): cada puesto tiene una posición
+  sin pelota y otra con pelota. El bloque se mueve entre ambas, se corre hacia el lado de la
+  pelota y acompaña su altura.
+- **`TeamBrain`** decide varias veces por segundo quién hace qué:
+  - Sin pelota, **un solo** jugador presiona, otro cubre detrás y el resto marca del lado del
+    arco o guarda su puesto.
+  - Con pelota, el más cercano ofrece apoyo en una zona libre con línea de pase y el más
+    adelantado se desmarca a la espalda del último defensor.
+- **`PlayerAI`** con la pelota elige entre remate, pase (a ras, filtrado o globo, según la
+  línea de pase, el espacio del receptor y el terreno ganado) o conducción. El receptor sale a
+  buscar la pelota en lugar de esperarla.
+- **Arqueros:** se ubican entre la pelota y el arco, achican en el mano a mano, salen a buscar
+  pelotas sueltas en el área, vuelan para atajar (agarran o dan rebote según el remate y su
+  atributo `goalkeeping`) y reparten con la mano o el pie.
+- **Cambio de jugador estilo WE:** el control pasa al receptor de tu pase o al compañero que
+  recibe, con Q / LB pasás al más cercano a la pelota, y en los saques el control queda en el
+  que saca.
+
 ## Ingeniería inversa y assets
 
 Dos objetivos separados:
@@ -156,11 +178,13 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-54 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+62 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
 completo con la misma entrada que un humano, el modelo generado con su AnimationTree
-siguiendo al gameplay, y 90 s de IA contra IA. `tests/behavior_probe.gd` compara contra la
+siguiendo al gameplay, 90 s de IA contra IA en 1v1 y 120 s de 5v5 midiendo comportamiento de equipo (sin
+enjambre alrededor de la pelota, distancia entre compañeros, arqueros en su zona, pases
+completados, remates) y el cambio de jugador. `tests/behavior_probe.gd` compara contra la
 referencia de WE2002. Corren en CI con
 GitHub Actions.
 

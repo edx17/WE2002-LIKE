@@ -21,6 +21,8 @@ const MAX_SPEED := 40.0
 var owner_player: Node = null
 ## Last player that touched the ball (restarts, stats).
 var last_touch: Node = null
+## Goalkeeper holding the ball in his hands (owner_player is the keeper).
+var held := false
 ## Custom spin vector (rad/s) used for Magnus curve. Visual rotation is
 ## handled separately.
 var spin := Vector3.ZERO
@@ -50,6 +52,7 @@ func kick(velocity: Vector3, new_spin := Vector3.ZERO, by: Node = null) -> void:
 	_pending_velocity = velocity.limit_length(MAX_SPEED)
 	spin = new_spin
 	owner_player = null
+	held = false
 	_control_rate = 0.0
 	if by != null:
 		last_touch = by
@@ -73,7 +76,28 @@ func place(pos: Vector3) -> void:
 	_pending_velocity = Vector3.ZERO
 	spin = Vector3.ZERO
 	owner_player = null
+	held = false
 	_control_rate = 0.0
+
+
+## Keeper catches the ball: it stays in his hands until he releases it.
+func hold(keeper: Node) -> void:
+	kick(Vector3.ZERO, Vector3.ZERO, keeper)
+	owner_player = keeper
+	held = true
+
+
+## Moves a held ball with the keeper's hands (call every frame).
+func carry(pos: Vector3) -> void:
+	_pending_position = pos
+	_pending_velocity = Vector3.ZERO
+
+
+## Drops a held ball at the keeper's feet so he can kick it.
+func release_hold(feet: Vector3) -> void:
+	held = false
+	_pending_position = Vector3(feet.x, RADIUS, feet.z)
+	_pending_velocity = Vector3.ZERO
 
 
 ## Current velocity, including a kick queued this frame.

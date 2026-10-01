@@ -12,11 +12,11 @@ extends Node
 ##          ●         ●
 ##      left foot   right foot
 
-enum Zone { NONE, FOOT, THIGH, CHEST, HEAD, BODY }
+enum Zone { NONE, FOOT, THIGH, CHEST, HEAD, BODY, HANDS }
 
 const ZONE_NAMES := {
 	Zone.NONE: "", Zone.FOOT: "PIE", Zone.THIGH: "MUSLO", Zone.CHEST: "PECHO",
-	Zone.HEAD: "CABEZA", Zone.BODY: "CUERPO",
+	Zone.HEAD: "CABEZA", Zone.BODY: "CUERPO", Zone.HANDS: "MANOS",
 }
 ## Upper bound of each zone, height of the ball centre above the player's feet.
 const ZONE_TOP := [
@@ -59,6 +59,13 @@ static func receive_quality(zone: int, relative_speed: float, control_n: float, 
 ## Zone the ball would touch right now, or NONE if out of reach.
 func contact_zone(ball_pos: Vector3) -> int:
 	var rel := ball_pos - player.global_position
+	if player.is_keeper and player.match_ctx != null \
+			and player.match_ctx.in_penalty_area(ball_pos, -player.attack_dir):
+		# Keepers use their hands in their own box: longer reach, up to the bar.
+		var flat := Vector2(rel.x, rel.z).length()
+		var diving := player.state == PlayerController.State.DIVE
+		if rel.y < (1.5 if diving else 2.45) and flat < (1.25 if diving else 0.95) and rel.y > -0.2:
+			return Zone.HANDS
 	var zone := zone_for_height(rel.y)
 	if zone == Zone.NONE:
 		return Zone.NONE
@@ -74,6 +81,9 @@ func receive(ball: Ball) -> String:
 	last_zone = zone
 	var rel_v := ball.current_velocity() - player.velocity
 	var rel_speed := rel_v.length()
+
+	if zone == Zone.HANDS:
+		return _keeper_save(ball, rel_speed)
 
 	if player.has_queued_action() and (zone == Zone.FOOT or zone == Zone.HEAD):
 		player.execute_queued_action(zone == Zone.HEAD, rel_speed)
@@ -101,6 +111,21 @@ func receive(ball: Ball) -> String:
 	if vn < 0.0:
 		v -= (1.35 * vn) * n
 	ball.kick(v * 0.75, ball.spin * 0.3, player)
+	return "deflect"
+
+
+## Catch or parry. Hard, well-struck shots are parried away from goal.
+func _keeper_save(ball: Ball, rel_speed: float) -> String:
+	var gk := player.stats.n(&"goalkeeping")
+	var diving := player.state == PlayerController.State.DIVE
+	var q := gk * (1.0 - clampf((rel_speed - 9.0) / 30.0, 0.0, 0.7)) * (0.82 if diving else 1.0)
+	if q > 0.42:
+		ball.hold(player)
+		player.match_ctx.on_keeper_save(player, true)
+		return "control"
+	var away := Vector3(player.attack_dir, 0.0, signf(ball.global_position.z - player.global_position.z))
+	ball.kick(away.normalized() * rel_speed * 0.35 + Vector3.UP * 2.5, Vector3.ZERO, player)
+	player.match_ctx.on_keeper_save(player, false)
 	return "deflect"
 
 

@@ -1,0 +1,60 @@
+{
+  "name": "Etapa 2 — 5 vs 5",
+  "direction_steps": 8,
+  "teams": [
+    {
+      "id": "team_a",
+      "attack_dir": 1,
+      "formation": "5v5_rombo",
+      "players": [
+        {
+          "id": "arquero_a",
+          "control": "ai"
+        },
+        {
+          "id": "defensor_a1",
+          "control": "ai"
+        },
+        {
+          "id": "defensor_a2",
+          "control": "ai"
+        },
+        {
+          "id": "medio_a",
+          "control": "ai"
+        },
+        {
+          "id": "atacante_01",
+          "control": "human"
+        }
+      ]
+    },
+    {
+      "id": "team_b",
+      "attack_dir": -1,
+      "formation": "5v5_rombo",
+      "players": [
+        {
+          "id": "arquero_b",
+          "control": "ai"
+        },
+        {
+          "id": "defensor_01",
+          "control": "ai"
+        },
+        {
+          "id": "defensor_b2",
+          "control": "ai"
+        },
+        {
+          "id": "medio_b",
+          "control": "ai"
+        },
+        {
+          "id": "atacante_b",
+          "control": "ai"
+        }
+      ]
+    }
+  ]
+}

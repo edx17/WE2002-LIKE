@@ -35,6 +35,9 @@ func update(delta: float) -> void:
 	_contest_timer -= delta
 
 	var owner := ball.owner_player as PlayerController
+	if owner != null and ball.held:
+		ball.carry(owner.global_position + owner.facing * 0.3 + Vector3.UP * 1.05)
+		return
 	if owner != null:
 		if not owner.can_play_ball() or not owner.interaction.dribble(ball):
 			ball.owner_player = null
@@ -92,7 +95,7 @@ func _contest(owner: PlayerController) -> void:
 ## Standing tackle. Returns true if the ball was won.
 func resolve_tackle(tackler: PlayerController) -> bool:
 	var owner := ball.owner_player as PlayerController
-	if owner == null or owner.team == tackler.team:
+	if owner == null or owner.team == tackler.team or ball.held:
 		return false
 	var to_ball := DirectionResolver.flat(ball.global_position - tackler.global_position)
 	if to_ball.length() > 1.5 or tackler.facing.dot(to_ball.normalized()) < 0.2:
@@ -116,7 +119,7 @@ func resolve_tackle(tackler: PlayerController) -> bool:
 ## Returns true once something has been hit.
 func check_slide(slider: PlayerController) -> bool:
 	var to_ball := DirectionResolver.flat(ball.global_position - slider.global_position)
-	if ball.global_position.y < 0.5 and to_ball.length() < 1.15 and slider.facing.dot(to_ball.normalized()) > 0.0:
+	if not ball.held and ball.global_position.y < 0.5 and to_ball.length() < 1.15 and slider.facing.dot(to_ball.normalized()) > 0.0:
 		var owner := ball.owner_player as PlayerController
 		ball.kick(slider.facing * rng.randf_range(7.0, 11.0) + Vector3.UP * 1.5, Vector3.ZERO, slider)
 		if owner != null:

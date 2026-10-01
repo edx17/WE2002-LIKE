@@ -28,6 +28,8 @@ extends Resource
 @export_range(1, 99) var technique := 75
 @export_range(1, 99) var aggression := 75
 @export_range(1, 99) var reaction := 75
+## Hands, positioning and reflexes. Only matters for goalkeepers.
+@export_range(1, 99) var goalkeeping := 40
 
 
 static func from_dict(data: Dictionary) -> PlayerStats:

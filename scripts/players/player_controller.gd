@@ -8,7 +8,7 @@ extends CharacterBody3D
 
 enum State {
 	IDLE, RUN, SPRINT, TURN, DRIBBLE, CONTROL, PASS, SHOOT, TACKLE, SLIDE,
-	JUMP, HEAD, FALL, GET_UP, FOUL, INJURED, CELEBRATE,
+	JUMP, HEAD, FALL, GET_UP, FOUL, INJURED, CELEBRATE, DIVE,
 }
 
 signal state_changed(player: PlayerController, from: int, to: int)
@@ -30,12 +30,18 @@ static var TACKLE_TIME := AnimationTimings.length("TACKLE", 0.45)
 static var SLIDE_TIME := AnimationTimings.length("SLIDE", 0.8)
 static var FALL_TIME := AnimationTimings.length("FALL", 0.7)
 static var GET_UP_TIME := AnimationTimings.length("GET_UP", 0.45)
+const DIVE_TIME := 0.55
 
 var stats: PlayerStats = PlayerStats.new()
 var team := 0
 ## +1 attacks the goal at +X, -1 the goal at -X.
 var attack_dir := 1.0
 var home_position := Vector3.ZERO
+## Position on the team sheet: GK, DF, MF, FW.
+var role := "MF"
+var is_keeper := false
+## This player's own brain; kept even while a human controls him.
+var ai: PlayerAI = null
 ## Object with fill(intent: PlayerIntent, player: PlayerController, delta: float).
 var input_source: Object = null
 var intent := PlayerIntent.new()
@@ -60,6 +66,7 @@ var last_kick_type := -1
 var _kick := {}
 var _queued := {}
 var _action_resolved := false
+var dive_velocity := Vector3.ZERO
 
 @onready var interaction: BallInteraction = $BallInteraction
 @onready var animation_selector: AnimationSelector = $AnimationSelector
@@ -113,6 +120,15 @@ func has_queued_action() -> bool:
 	return not _queued.is_empty()
 
 
+func can_dive() -> bool:
+	return is_keeper and state in [State.IDLE, State.RUN, State.SPRINT, State.TURN]
+
+
+## Lateral distance a keeper can cover with a dive.
+func dive_reach() -> float:
+	return lerpf(1.6, 2.9, stats.n(&"goalkeeping"))
+
+
 func opponent_has_ball() -> bool:
 	return ball != null and ball.owner_player != null and (ball.owner_player as PlayerController).team != team
 
@@ -148,10 +164,17 @@ func _physics_process(delta: float) -> void:
 				_set_state(State.IDLE)
 		State.CELEBRATE:
 			speed = move_toward(speed, 0.0, DECELERATION * delta)
+		State.DIVE:
+			dive_velocity = dive_velocity.move_toward(Vector3.ZERO, 6.0 * delta)
+			if state_time >= DIVE_TIME:
+				_set_state(State.GET_UP)
 		_:
 			_update_locomotion(delta)
 			if not frozen:
-				_handle_actions()
+				if is_keeper and intent.dive_target != null and can_dive():
+					_start_dive(intent.dive_target)
+				else:
+					_handle_actions()
 
 	_move(delta)
 	animation_selector.update(self, delta)
@@ -246,8 +269,12 @@ func _handle_actions() -> void:
 
 
 func _move(delta: float) -> void:
-	velocity.x = facing.x * speed
-	velocity.z = facing.z * speed
+	if state == State.DIVE:
+		velocity.x = dive_velocity.x
+		velocity.z = dive_velocity.z
+	else:
+		velocity.x = facing.x * speed
+		velocity.z = facing.z * speed
 	if is_on_floor():
 		velocity.y = -0.1
 	else:
@@ -255,7 +282,7 @@ func _move(delta: float) -> void:
 	move_and_slide()
 	# Bumping into someone costs speed.
 	var actual := Vector2(velocity.x, velocity.z).length()
-	if actual < speed:
+	if state != State.DIVE and actual < speed:
 		speed = actual
 	_apply_rotation()
 
@@ -275,7 +302,18 @@ func _set_state(new_state: int) -> void:
 
 # --- kicks -------------------------------------------------------------------
 
+func _start_dive(target: Vector3) -> void:
+	var lateral := DirectionResolver.flat(target - global_position)
+	dive_velocity = lateral / 0.33
+	if dive_velocity.length() > 8.0:
+		dive_velocity = dive_velocity.normalized() * 8.0
+	speed = 0.0
+	_set_state(State.DIVE)
+
+
 func _start_kick(action: int, power: float) -> void:
+	if ball.held:
+		ball.release_hold(global_position + facing * 0.55)
 	var aim := DirectionResolver.quantize(intent.move, direction_steps)
 	var dir := DirectionResolver.to_world(aim) if aim != Vector2.ZERO else facing
 	_kick = {"action": action, "power": power, "dir": dir, "aim": aim, "done": false}
@@ -331,7 +369,7 @@ func _execute_kick(action: int, power: float, dir: Vector3, aim: Vector2, one_to
 	var result := KickSolver.solve(req, rng)
 	ball.kick(result.velocity, result.spin, self)
 	if match_ctx:
-		match_ctx.referee.set_cooldown(self, 0.3)
+		match_ctx.referee.set_cooldown(self, 0.5)
 	last_kick_type = req.type
 	kicked.emit(self, req.type, result)
 

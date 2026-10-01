@@ -4,7 +4,8 @@ extends RefCounted
 ## without editor configuration and bindings stay readable in one place.
 ##
 ## Pad layout follows the classic WE mapping on an Xbox-style pad:
-## A = pase, X = remate, Y = pase filtrado, B = centro/globo, RB = sprint.
+## A = pase, X = remate, Y = pase filtrado, B = centro/globo, RB = sprint,
+## LB = cambiar de jugador.
 
 
 static func ensure_actions() -> void:
@@ -17,6 +18,7 @@ static func ensure_actions() -> void:
 	_add(&"through", [KEY_I], [JOY_BUTTON_Y])
 	_add(&"lob", [KEY_L], [JOY_BUTTON_B])
 	_add(&"sprint", [KEY_SHIFT, KEY_SPACE], [JOY_BUTTON_RIGHT_SHOULDER])
+	_add(&"switch_player", [KEY_Q], [JOY_BUTTON_LEFT_SHOULDER])
 	_add(&"toggle_directions", [KEY_F2], [JOY_BUTTON_LEFT_STICK])
 	_add(&"camera_zoom", [KEY_C], [JOY_BUTTON_BACK])
 	_add(&"toggle_debug", [KEY_F3], [])

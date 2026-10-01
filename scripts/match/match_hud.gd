@@ -11,12 +11,13 @@ var _bar_fill: ColorRect
 var _bar_label: Label
 var _debug: Label
 var _help: Label
+var _name_bar: Label
 var _message_time := 0.0
 
 const BAR_WIDTH := 260.0
 const ACTION_NAMES := ["PASE", "REMATE", "FILTRADO", "GLOBO/CENTRO"]
 const HELP := """MOVER  WASD / flechas / stick      SPRINT  Shift / Espacio / RB
-PASE  J / A      REMATE  K / X      FILTRADO  I / Y      GLOBO  L / B
+PASE  J / A      REMATE  K / X      FILTRADO  I / Y      GLOBO  L / B      CAMBIAR JUGADOR  Q / LB
 Mantener = cargar potencia · soltar = patear · sin pelota = acción de primera
 DEFENDER: mantener PASE = presionar · tocar PASE = quite · REMATE = barrida
 F2 8/16 direcciones · C zoom cámara · F3 debug · R reiniciar · F1 ayuda"""
@@ -31,6 +32,7 @@ func setup(m: MatchController) -> void:
 	_message.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_debug = _label(14, HORIZONTAL_ALIGNMENT_LEFT)
 	_debug.position = Vector2(12, 12)
+	_debug.visible = false  # F3
 	_help = _label(14, HORIZONTAL_ALIGNMENT_LEFT)
 	_help.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	_help.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -38,6 +40,21 @@ func setup(m: MatchController) -> void:
 	_help.offset_top = -12
 	_help.offset_bottom = -12
 	_help.text = HELP
+	_help.visible = false
+
+	# WE-style bar under the action: position, number, name of the controlled player.
+	_name_bar = _label(22, HORIZONTAL_ALIGNMENT_CENTER)
+	_name_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_name_bar.offset_left = -260
+	_name_bar.offset_right = 260
+	_name_bar.offset_top = -48
+	_name_bar.offset_bottom = -14
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.12, 0.12, 0.14, 0.82)
+	bar_bg.set_corner_radius_all(14)
+	bar_bg.border_color = Color(0.7, 0.7, 0.72)
+	bar_bg.set_border_width_all(2)
+	_name_bar.add_theme_stylebox_override(&"normal", bar_bg)
 
 	_bar_bg = ColorRect.new()
 	_bar_bg.color = Color(0, 0, 0, 0.6)
@@ -91,6 +108,9 @@ func _process(delta: float) -> void:
 	_message.visible = _message_time > 0.0
 
 	var h := match_ctx.human
+	_name_bar.visible = h != null
+	if h != null:
+		_name_bar.text = "%s   %d   %s" % [h.role, h.stats.number, h.stats.name]
 	if h == null:
 		_bar_bg.visible = false
 		_debug.text = ""

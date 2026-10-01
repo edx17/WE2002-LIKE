@@ -4,11 +4,16 @@ extends RefCounted
 ## it fills the same PlayerIntent a pad does, so AI players are bound by the
 ## same 8/16 directions, acceleration, turn rate and kick imprecision.
 ##
-## Never "WHERE BALL? → RUN". Each decision picks a tactical mode first.
+## Never "WHERE BALL? → RUN". With a team (TeamBrain) the player first gets a
+## tactical assignment (press, cover, mark, support, run, hold the slot) and
+## only then decides how to move. With the ball it weighs pass vs dribble vs
+## shot. Without a TeamBrain (1v1) it falls back to the solo behaviours.
 
-enum Mode { POSITION, DEFEND, MARK, COVER, SUPPORT, RUN, PRESS, RECOVER, ATTACK }
+enum Mode { POSITION, DEFEND, MARK, COVER, SUPPORT, RUN, PRESS, RECOVER, ATTACK, KEEPER, RECEIVE }
 
-const MODE_NAMES := ["POSITION", "DEFEND", "MARK", "COVER", "SUPPORT", "RUN", "PRESS", "RECOVER", "ATTACK"]
+const MODE_NAMES := ["POSITION", "DEFEND", "MARK", "COVER", "SUPPORT", "RUN", "PRESS", "RECOVER", "ATTACK", "KEEPER", "RECEIVE"]
+## Seconds a keeper holds the ball before distributing it.
+const KEEPER_HOLD := 0.9
 
 var mode: int = Mode.POSITION
 var rng := RandomNumberGenerator.new()
@@ -23,6 +28,8 @@ var _press := PlayerIntent.NONE
 
 func fill(intent: PlayerIntent, p: PlayerController, delta: float) -> void:
 	intent.begin_frame()
+	if p.is_keeper:
+		_keeper_reflex(intent, p)  # every frame: shots don't wait for the brain
 	_think -= delta
 	if _think <= 0.0:
 		# Reaction attribute = how often the brain re-evaluates.
@@ -37,23 +44,86 @@ func fill(intent: PlayerIntent, p: PlayerController, delta: float) -> void:
 	if _release != PlayerIntent.NONE:
 		intent.release(_release, _release_charge)
 		_release = PlayerIntent.NONE
+		# Don't chase your own pass: stop and re-think right after the kick.
+		_move = Vector2.ZERO
+		_think = 0.2
 
 
 func _decide(p: PlayerController) -> void:
 	var carrier := p.ball.owner_player as PlayerController
+	if p.is_keeper:
+		_keeper(p, carrier)
+		return
 	if carrier == p:
-		_attack(p)
-	elif carrier != null and carrier.team != p.team:
-		_defend(p, carrier)
-	elif carrier != null:
-		_support(p)
-	else:
-		_loose_ball(p)
+		_on_ball(p)
+		return
+	if carrier == null and p.match_ctx.pass_receiver == p:
+		_receive(p)
+		return
+	var brain := p.match_ctx.brain_for(p.team)
+	if brain == null:
+		if carrier != null and carrier.team != p.team:
+			_defend(p, carrier)
+		elif carrier != null:
+			_support(p)
+		else:
+			_loose_ball(p)
+		return
+	var a := brain.assignment(p)
+	var target: Vector3 = a.target
+	match int(a.mode):
+		TeamBrain.Mode.PRESS:
+			if carrier != null and carrier.team != p.team:
+				_defend(p, carrier)
+			else:
+				_loose_ball(p)
+		TeamBrain.Mode.COVER:
+			mode = Mode.COVER
+			_go(p, target, 1.0, 6.0)
+		TeamBrain.Mode.MARK:
+			mode = Mode.MARK
+			_go(p, target, 0.8, 5.0)
+		TeamBrain.Mode.SUPPORT:
+			mode = Mode.SUPPORT
+			_go(p, target, 1.5, 8.0)
+		TeamBrain.Mode.RUN:
+			mode = Mode.RUN
+			_go(p, target, 1.0, 3.0)
+		_:
+			mode = Mode.POSITION
+			_go(p, target, 1.5, 10.0)
+			# A loose ball rolling right past me: take it.
+			if carrier == null and p.global_position.distance_to(p.ball.global_position) < 4.0:
+				_loose_ball(p)
+
+
+## A pass is coming to me: meet the ball on its path, don't wait for it.
+func _receive(p: PlayerController) -> void:
+	mode = Mode.RECEIVE
+	var b := p.ball.global_position
+	var v := DirectionResolver.flat(p.ball.linear_velocity)
+	var meet := b
+	var t := 0.0
+	while t <= 2.5:
+		var q := b + v * t * (1.0 - 0.15 * t)  # rolling ball slows down
+		if p.global_position.distance_to(q) / p.sprint_speed() <= t:
+			meet = q
+			break
+		meet = q
+		t += 0.1
+	_move = _towards(p, meet, 0.2)
+	_sprint = p.global_position.distance_to(meet) > 3.0
+
+
+## Walk/run to a point; sprint only when far from it.
+func _go(p: PlayerController, target: Vector3, tolerance: float, sprint_beyond: float) -> void:
+	_move = _towards(p, target, tolerance)
+	_sprint = p.global_position.distance_to(target) > sprint_beyond
 
 
 # --- with the ball -------------------------------------------------------------
 
-func _attack(p: PlayerController) -> void:
+func _on_ball(p: PlayerController) -> void:
 	mode = Mode.ATTACK
 	var m := p.match_ctx
 	var goal := m.goal_center(p.attack_dir)
@@ -64,26 +134,96 @@ func _attack(p: PlayerController) -> void:
 	if threat != null:
 		threat_dist = p.global_position.distance_to(threat.global_position)
 
+	# 1. Shoot.
 	var lane_clear := not m.is_lane_blocked(p, goal, 1.8)
 	if dist < 24.0 and (lane_clear or threat_dist < 1.8 or dist < 13.0):
-		# Aim at the far post: stick up/down selects the post.
-		var post := -signf(p.global_position.z)
-		if post == 0.0:
-			post = 1.0 if rng.randf() < 0.5 else -1.0
-		_move = Vector2(p.attack_dir, post).normalized()
-		_release = PlayerIntent.Action.SHOOT
-		_release_charge = clampf(0.4 + dist / 45.0 + rng.randf_range(-0.08, 0.08), 0.35, 0.85)
-		_sprint = false
+		_shoot(p, dist)
 		return
 
-	# Dribble: pick the best of the 8 directions (progress vs danger).
+	# 2. Pass, when a team-mate is clearly better placed or I'm being closed down.
+	var pressured := threat_dist < 2.6
+	var best_pass := _best_pass(p)
+	var dribble := _best_dribble(p, to_goal / dist)
+	if not best_pass.is_empty():
+		var need: float = 0.9 if pressured else 1.6 + maxf(0.0, dribble[1])
+		if best_pass.score > need:
+			var aim: Vector3 = best_pass.target - p.global_position
+			_move = DirectionResolver.to_stick(DirectionResolver.flat(aim)).normalized()
+			_release = best_pass.action
+			_release_charge = best_pass.charge
+			_sprint = false
+			return
+
+	# 3. Dribble towards the best of the 8 directions.
+	_move = dribble[0]
+	_sprint = threat_dist > 4.0 or dribble[1] > 0.9
+
+
+func _shoot(p: PlayerController, dist: float) -> void:
+	# Aim at the far post: stick up/down selects the post.
+	var post := -signf(p.global_position.z)
+	if post == 0.0:
+		post = 1.0 if rng.randf() < 0.5 else -1.0
+	_move = Vector2(p.attack_dir, post).normalized()
+	_release = PlayerIntent.Action.SHOOT
+	_release_charge = clampf(0.4 + dist / 45.0 + rng.randf_range(-0.08, 0.08), 0.35, 0.85)
+	_sprint = false
+
+
+## Scores every team-mate as a pass: safe lane, space around the receiver,
+## ground gained. Returns {} when nobody is worth it.
+func _best_pass(p: PlayerController) -> Dictionary:
+	var m := p.match_ctx
+	var best := {}
+	var my_prog := Formation.progress_of(p.global_position.x, p.attack_dir)
+	for mate in m.teammates_of(p):
+		if mate.is_keeper or not mate.can_play_ball():
+			continue
+		var target := mate.global_position + DirectionResolver.flat(mate.velocity) * 0.4
+		var d := p.global_position.distance_to(target)
+		if d < 5.0 or d > 42.0:
+			continue
+		var lane := _lane_clearance(p, target)
+		var space := 8.0
+		for o in m.opponents_of(p):
+			space = minf(space, o.global_position.distance_to(target))
+		var gain := (Formation.progress_of(target.x, p.attack_dir) - my_prog) * 2.0 * PitchBuilder.HALF_LENGTH
+		var action := PlayerIntent.Action.PASS
+		var safe := clampf((lane - 1.0) / 4.0, 0.0, 1.0)
+		if safe < 0.3 and d > 15.0:
+			action = PlayerIntent.Action.LOB  # lane blocked: go over it
+			safe = 0.5
+		elif gain > 12.0 and safe > 0.6 and space > 4.0:
+			action = PlayerIntent.Action.THROUGH
+		var score := safe * 1.6 + clampf(space / 6.0, 0.0, 1.0) + gain / 15.0 - d / 60.0
+		if best.is_empty() or score > best.score:
+			best = {"score": score, "target": target, "action": action,
+				"charge": clampf(0.25 + d / 45.0 + rng.randf_range(-0.05, 0.05), 0.3, 0.95)}
+	return best
+
+
+## Distance from the closest opponent to the passing lane.
+func _lane_clearance(p: PlayerController, target: Vector3) -> float:
+	var a := DirectionResolver.flat(p.global_position)
+	var b := DirectionResolver.flat(target)
+	var clear := 10.0
+	for o in p.match_ctx.opponents_of(p):
+		var c := DirectionResolver.flat(o.global_position)
+		var closest := Geometry3D.get_closest_point_to_segment(c, a, b)
+		if closest.distance_to(a) > 0.8:
+			clear = minf(clear, closest.distance_to(c))
+	return clear
+
+
+## [best stick direction, its score] among the 8 directions (progress vs danger).
+func _best_dribble(p: PlayerController, goal_dir: Vector3) -> Array:
 	var best := Vector2.ZERO
 	var best_score := -INF
 	for i in 8:
 		var d2 := Vector2.from_angle(i * TAU / 8.0)
 		var d3 := DirectionResolver.to_world(d2)
-		var score := d3.dot(to_goal / dist) * 1.2
-		for opp in m.opponents_of(p):
+		var score := d3.dot(goal_dir) * 1.2
+		for opp in p.match_ctx.opponents_of(p):
 			var to_opp := DirectionResolver.flat(opp.global_position - p.global_position)
 			var od := to_opp.length()
 			if od < 6.0 and od > 0.01:
@@ -96,8 +236,7 @@ func _attack(p: PlayerController) -> void:
 		if score > best_score:
 			best_score = score
 			best = d2
-	_move = best
-	_sprint = threat_dist > 4.0 or best_score > 0.9
+	return [best, best_score]
 
 
 # --- without the ball ------------------------------------------------------------
@@ -113,6 +252,8 @@ func _defend(p: PlayerController, carrier: PlayerController) -> void:
 	# Goal-side jockeying: stand between the carrier and our goal, tighter the
 	# closer he gets to it.
 	var jockey := lerpf(1.4, 2.8, clampf(carrier_goal_dist / 40.0, 0.0, 1.0))
+	if carrier.speed < 1.5:
+		jockey = 1.0  # he stopped: close him down and challenge
 	var target := c + to_goal.normalized() * jockey + DirectionResolver.flat(carrier.velocity) * 0.25
 	var beaten := DirectionResolver.flat(c - p.global_position).dot(to_goal) > 0.5
 
@@ -145,7 +286,7 @@ func _loose_ball(p: PlayerController) -> void:
 	var their_time := INF
 	for opp in m.opponents_of(p):
 		their_time = minf(their_time, _arrival_time(opp, ball))
-	if my_time <= their_time + 0.25:
+	if my_time <= their_time + 0.25 or m.brain_for(p.team) != null:
 		mode = Mode.PRESS
 		var t := minf(my_time, 1.5)
 		var predicted := ball.global_position + DirectionResolver.flat(ball.linear_velocity) * t * 0.7
@@ -161,12 +302,85 @@ func _loose_ball(p: PlayerController) -> void:
 
 
 func _support(p: PlayerController) -> void:
-	# Stage 2+: formation slots, width, runs. For now: hold home ahead of the ball.
 	mode = Mode.SUPPORT
 	var target := p.home_position
 	target.x = clampf(p.ball.global_position.x + p.attack_dir * 10.0, -45.0, 45.0)
 	_move = _towards(p, target, 1.5)
 	_sprint = false
+
+
+# --- goalkeeper ---------------------------------------------------------------------
+
+func _keeper(p: PlayerController, carrier: PlayerController) -> void:
+	mode = Mode.KEEPER
+	var m := p.match_ctx
+	var ball := p.ball
+	var own_goal := m.goal_center(-p.attack_dir)
+	_sprint = false
+	if carrier == p:
+		# Holding: look up, then distribute to the best-placed team-mate.
+		_move = Vector2.ZERO
+		if p.state_time > KEEPER_HOLD or not ball.held:
+			var best := _best_pass(p)
+			if best.is_empty():
+				_move = Vector2(p.attack_dir, 0.0)
+				_release = PlayerIntent.Action.LOB
+				_release_charge = 0.75
+			else:
+				var aim: Vector3 = best.target - p.global_position
+				_move = DirectionResolver.to_stick(DirectionResolver.flat(aim)).normalized()
+				_release = best.action
+				_release_charge = best.charge
+		return
+	var b := ball.global_position
+	var in_box := m.in_penalty_area(b, -p.attack_dir)
+	# Loose ball in my box that I reach first: go and claim it.
+	if carrier == null and in_box:
+		var my_t := _arrival_time(p, ball)
+		var their_t := INF
+		for o in m.opponents_of(p):
+			their_t = minf(their_t, _arrival_time(o, ball))
+		if my_t < their_t:
+			_move = _towards(p, b, 0.1)
+			_sprint = true
+			return
+	# One-on-one: come out to narrow the angle and block.
+	if carrier != null and carrier.team != p.team and in_box and p.global_position.distance_to(b) < 9.0:
+		_move = _towards(p, b - DirectionResolver.flat(b - own_goal).normalized() * 1.2, 0.2)
+		_sprint = true
+		if p.global_position.distance_to(b) < 1.6:
+			_press = PlayerIntent.Action.PASS
+		return
+	# Positioning: on the line between ball and goal centre, further out the
+	# closer the ball is.
+	var to_ball := DirectionResolver.flat(b - own_goal)
+	var out := clampf(to_ball.length() * 0.12, 0.8, 5.5)
+	var spot := own_goal + to_ball.normalized() * out
+	spot.z = clampf(spot.z, -PitchBuilder.GOAL_HALF_WIDTH, PitchBuilder.GOAL_HALF_WIDTH)
+	_move = _towards(p, spot, 0.25)
+	_sprint = p.global_position.distance_to(spot) > 4.0
+
+
+## Every frame: if a shot will cross my line out of my standing reach, dive.
+func _keeper_reflex(intent: PlayerIntent, p: PlayerController) -> void:
+	var ball := p.ball
+	if ball.owner_player != null or not p.can_dive():
+		return
+	var v := ball.linear_velocity
+	var own_goal_x := -p.attack_dir * PitchBuilder.HALF_LENGTH
+	if signf(v.x) != signf(own_goal_x) or absf(v.x) < 6.0:
+		return
+	var t := (p.global_position.x - ball.global_position.x) / v.x
+	if t <= 0.0 or t > 0.9:
+		return
+	var cross := ball.global_position + v * t
+	cross.y -= 0.5 * Ball.GRAVITY * t * t
+	var lateral := absf(cross.z - p.global_position.z)
+	if absf(cross.z) > PitchBuilder.GOAL_HALF_WIDTH + 1.0 or cross.y > 2.7:
+		return
+	# Reaction: better keepers commit later and more accurately.
+	if lateral > 0.7 and lateral < p.dive_reach() and t < lerpf(0.35, 0.6, p.stats.n(&"goalkeeping")):
+		intent.dive_target = cross
 
 
 static func _arrival_time(p: PlayerController, ball: Ball) -> float:

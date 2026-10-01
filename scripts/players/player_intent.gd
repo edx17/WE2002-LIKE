@@ -19,12 +19,15 @@ var released_charge := 0.0
 ## For the HUD power bar.
 var charging_action := NONE
 var charge := 0.0
+## Goalkeepers only: where to dive (null = no dive this frame).
+var dive_target: Variant = null
 
 
 func begin_frame() -> void:
 	just_pressed = 0
 	released_action = NONE
 	released_charge = 0.0
+	dive_target = null
 
 
 func clear() -> void:

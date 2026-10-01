@@ -2,18 +2,59 @@
   "_doc": "Tiempos de cada clip (segundos). Los usan a la vez el generador de animaciones (Blender) y el gameplay (ventanas de patada, duración de estados). 'contact' = momento en que el pie/cabeza toca la pelota. Valores a recalibrar con data/reference/we2002_behavior.json.",
   "fps": 30,
   "clips": {
-    "IDLE":      { "length": 1.6,  "loop": true },
-    "WALK":      { "length": 1.0,  "loop": true },
-    "RUN":       { "length": 0.62, "loop": true },
-    "SPRINT":    { "length": 0.52, "loop": true },
-    "PASS":      { "length": 0.30, "contact": 0.09 },
-    "SHOOT":     { "length": 0.40, "contact": 0.15 },
-    "HEAD":      { "length": 0.45, "contact": 0.15 },
-    "TACKLE":    { "length": 0.45, "contact": 0.12 },
-    "SLIDE":     { "length": 0.80 },
-    "FALL":      { "length": 0.70 },
-    "GET_UP":    { "length": 0.45 },
-    "TURN_180":  { "length": 0.25 },
-    "CELEBRATE": { "length": 1.0,  "loop": true }
+    "IDLE": {
+      "length": 1.6,
+      "loop": true
+    },
+    "WALK": {
+      "length": 1.0,
+      "loop": true
+    },
+    "RUN": {
+      "length": 0.62,
+      "loop": true
+    },
+    "SPRINT": {
+      "length": 0.52,
+      "loop": true
+    },
+    "PASS": {
+      "length": 0.3,
+      "contact": 0.09
+    },
+    "SHOOT": {
+      "length": 0.4,
+      "contact": 0.15
+    },
+    "HEAD": {
+      "length": 0.45,
+      "contact": 0.15
+    },
+    "TACKLE": {
+      "length": 0.45,
+      "contact": 0.12
+    },
+    "SLIDE": {
+      "length": 0.8
+    },
+    "FALL": {
+      "length": 0.7
+    },
+    "GET_UP": {
+      "length": 0.45
+    },
+    "TURN_180": {
+      "length": 0.25
+    },
+    "CELEBRATE": {
+      "length": 1.0,
+      "loop": true
+    },
+    "DIVE_LEFT": {
+      "length": 0.55
+    },
+    "DIVE_RIGHT": {
+      "length": 0.55
+    }
   }
 }

@@ -1,0 +1,11 @@
+{
+  "_doc": "Posiciones por puesto. Coordenadas en el espacio del equipo: x = progreso desde la propia línea de fondo (0) hasta la rival (1); z = ancho, -1..1 del medio ancho del campo. 'def' es la forma sin pelota, 'att' con pelota; el bloque se mueve entre ambas y se desliza hacia la pelota.",
+  "name": "5v5 rombo (1-2-1)",
+  "slots": [
+    { "role": "GK", "def": [0.015, 0.0],  "att": [0.04, 0.0] },
+    { "role": "DF", "def": [0.17, -0.32], "att": [0.36, -0.55] },
+    { "role": "DF", "def": [0.17, 0.32],  "att": [0.36, 0.55] },
+    { "role": "MF", "def": [0.3, 0.0],    "att": [0.55, 0.0] },
+    { "role": "FW", "def": [0.43, 0.08],  "att": [0.76, -0.1] }
+  ]
+}

@@ -480,6 +480,14 @@ def clip_pose(name, t, spec):
         return {"Hips": (0, 0, 60 * u), "Spine": (10, 0, 30 * u), "UpperLeg.L": (-30 * u, 0, 0),
                 "LowerLeg.L": (50 * u, 0, 0), "LowerLeg.R": (30 * u, 0, 0),
                 "UpperArm.L": (-20 * u, -30 * u, 0), "UpperArm.R": (20 * u, 30 * u, 0)}, (0, 0, -0.08 * u)
+    if name in ("DIVE_LEFT", "DIVE_RIGHT"):
+        # Goalkeeper dive: body lays out sideways, arms stretched over the head.
+        sx = 1 if name == "DIVE_LEFT" else -1
+        u = math.sin(math.pi * 0.5 * min(t / 0.45, 1.0))
+        return {"Hips": (0, 78 * u * sx, 0), "UpperArm.L": (-170 * u, -10 * sx, 0), "UpperArm.R": (-170 * u, -10 * sx, 0),
+                "LowerArm.L": (-10, 0, 0), "LowerArm.R": (-10, 0, 0), "UpperLeg.L": (-15 * u, 0, 10 * sx * u),
+                "UpperLeg.R": (10 * u, 0, 10 * sx * u), "LowerLeg.L": (25 * u, 0, 0), "Neck": (0, -20 * sx * u, 0)}, \
+            (0.45 * u * sx, 0, -0.62 * u)
     if name == "CELEBRATE":
         j = abs(math.sin(2 * math.pi * t))
         return {"UpperArm.L": (-165, -25, 0), "UpperArm.R": (-165, 25, 0), "LowerArm.L": (-20, 0, 0),

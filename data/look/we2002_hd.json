@@ -25,9 +25,9 @@
     "shadow_max_distance": 120
   },
   "camera": {
-    "fov": 42,
-    "height": 18,
-    "distance": 30,
+    "fov": 40,
+    "height": 13.0,
+    "distance": 22.0,
     "lead": 7,
     "lead_speed": 1.8,
     "follow_speed": 3.0,
