@@ -13,9 +13,9 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 |---|---|---|
 | **0** Dos muñecos y una pelota | campo, jugador, pelota, cámara: correr → controlar → girar → patear | ✅ jugable (`--match=stage0_solo`) |
 | **1** 1 vs 1 | control, pase, remate, recuperación, choque, quite, barrida, cambio de dirección, balón dividido | ✅ jugable (`--match=stage1_1v1`) |
-| **2** 5 vs 5 | formación en JSON, bloque que se desplaza, presión de un solo jugador, cobertura, marca, apoyo, desmarque, pases entre IA, arqueros, cambio de jugador | ✅ jugable (por defecto) |
-| **3** 11 vs 11 | formación, roles, táctica, presión, línea defensiva, offside, pelota parada | ⏳ |
-| **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay lateral, córner, saque de arco y falta simplificados |
+| **2** 5 vs 5 | formación en JSON, bloque que se desplaza, presión de un solo jugador, cobertura, marca, apoyo, desmarque, pases entre IA, arqueros, cambio de jugador | ✅ jugable (`--match=stage2_5v5`) |
+| **3** 11 vs 11 | 4-4-2 / 4-3-3 / 3-5-2, puestos, tácticas (presión, línea, amplitud, compacidad), línea de 4 en bloque, trampa del offside, fuera de juego, córners y tiros libres con barrera | ✅ jugable (por defecto) |
+| **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay fuera de juego, córner y tiro libre con barrera; lateral, saque de arco y faltas simplificados |
 | Assets | pipeline receta JSON → Blender → GLB → Godot. Estilo **classic** (diseño WE2002: cuadrado, low-poly, cara pintada) por defecto y **modern** (esculpido) opcional. Dorsales, escudo, manga corta/larga, 13 clips | 🟡 jugadores generados; animaciones procedurales |
 | Ingeniería inversa | 20 métricas de comportamiento, sonda que mide nuestro motor, protocolo de medición | 🟡 falta medir WE2002 |
 | Después | estadios, caras, público, menús, repeticiones, Master League-like, editor | — |
@@ -26,7 +26,8 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 2. O por línea de comandos:
 
 ```bash
-godot --path .                          # 5v5 contra la IA
+godot --path .                          # 11v11 contra la IA
+godot --path . -- --match=stage2_5v5    # 5v5
 godot --path . -- --match=stage1_1v1    # 1v1
 godot --path . -- --match=stage0_solo   # etapa 0: solo vos y la pelota
 godot --path . -- --attract             # IA contra IA
@@ -43,6 +44,7 @@ godot --path . -- --attract             # IA contra IA
 | Pase filtrado | I | Y |
 | Globo / centro | L | B |
 | Cambiar de jugador | Q | LB |
+| Cambiar táctica (equilibrado / presión alta / repliegue) | T | click stick der. |
 | **Sin pelota, rival la tiene:** mantener PASE = presionar · tocar PASE = quite · REMATE = barrida | | |
 | **Sin pelota, pelota suelta:** soltar cualquier botón = acción **de primera** al llegar la pelota | | |
 | 8 ↔ 16 direcciones | F2 | click stick izq. |
@@ -141,6 +143,33 @@ docs/     INGENIERIA_INVERSA.md  PIPELINE_ASSETS.md
   recibe, con Q / LB pasás al más cercano a la pelota, y en los saques el control queda en el
   que saca.
 
+## Etapa 3: 11 vs 11
+
+- **Formaciones** `4-4-2`, `4-3-3` y `3-5-2` en `data/formations/`, con puestos reales
+  (GK, CB, LB/RB, LWB/RWB, DMF, CMF, LMF/RMF, WG, CF).
+- **Tácticas** en `data/tactics/`: `pressing`, `defensive_line`, `width`, `compactness` y
+  `offside_trap`, todas de 0 a 1.
+  - Presión alta: el rival presiona con dos en tu campo y adelanta la línea.
+  - Repliegue: el equipo espera en su campo.
+  - Con **T** cambiás la táctica de tu equipo durante el partido.
+- **Línea defensiva:** los defensores se mueven como una línea plana. Nunca queda más alta que
+  la pelota en campo propio y sube en bloque para dejar en offside.
+- **Comportamiento por puesto:**
+  - Los delanteros y extremos esperan en la línea del último defensor, habilitados hasta el pase.
+  - Los laterales pasan al ataque por su banda.
+  - Con pelota hay dos jugadores de apoyo.
+- **Fuera de juego:** cuando un compañero juega la pelota se anotan los adelantados, y si uno
+  de ellos la toca primero, cobra el juez. Laterales, córners y saques de arco no cuentan. La IA
+  no le pasa a un compañero que está en offside.
+- **Pelota parada:**
+  - Córner: los cuatro mejores cabeceadores van al área (primer palo, segundo palo, punto
+    penal, borde), cada uno marcado del lado del arco.
+  - Tiro libre a menos de 32 m: barrera de 3 o 4 a 9,15 m en la línea pelota-arco. Cerca del
+    arco, la IA patea directo.
+  - El rival respeta la distancia hasta que se juega la pelota.
+- **Planteles:** `tools/data/make_squads.py` genera los dos planteles de 11 (atributos según el
+  puesto y aspecto propio de cada uno) y el partido `stage3_11v11`.
+
 ## Ingeniería inversa y assets
 
 Dos objetivos separados:
@@ -178,13 +207,14 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-62 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+71 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
 completo con la misma entrada que un humano, el modelo generado con su AnimationTree
 siguiendo al gameplay, 90 s de IA contra IA en 1v1 y 120 s de 5v5 midiendo comportamiento de equipo (sin
 enjambre alrededor de la pelota, distancia entre compañeros, arqueros en su zona, pases
-completados, remates) y el cambio de jugador. `tests/behavior_probe.gd` compara contra la
+completados, remates), el cambio de jugador, el fuera de juego (adelantado y habilitado), el
+córner, la barrera y 90 s de 11v11 midiendo la línea de 4 y los pases. `tests/behavior_probe.gd` compara contra la
 referencia de WE2002. Corren en CI con
 GitHub Actions.
 
