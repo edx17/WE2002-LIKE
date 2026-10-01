@@ -5,12 +5,17 @@ extends RefCounted
 ## Players without a generated model keep the placeholder capsule.
 
 const MODEL_DIR := "res://assets/players/generated/"
+## Hand-made models (docs/BLENDER_GUIA.md) override the generated ones.
+const CUSTOM_DIR := "res://assets/players/custom/"
 const KIT_DIR := "res://assets/kits/"
 ## Placeholder meshes replaced by the model.
 const PLACEHOLDER_PARTS := ["LegLeft", "LegRight", "Shorts", "Body", "Head"]
 
 
 static func model_path(appearance: String) -> String:
+	var custom := CUSTOM_DIR + appearance + ".glb"
+	if ResourceLoader.exists(custom):
+		return custom
 	return MODEL_DIR + appearance + ".glb"
 
 

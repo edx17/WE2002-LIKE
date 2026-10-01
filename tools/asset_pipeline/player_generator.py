@@ -1,6 +1,7 @@
 """PLAYER_MASTER generator: recipe JSON -> rigged, animated GLB.
 
     blender -b -P tools/asset_pipeline/player_generator.py -- player_001 [player_002 ...]
+    ... -- player_001 --save-blend      (also writes assets/source/players/player_001.blend)
     python  tools/asset_pipeline/player_generator.py player_001        (with the `bpy` module)
     ... -- --all                                                        (every recipe in data/appearance)
 
@@ -52,6 +53,8 @@ import classic_builder  # noqa: E402
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA = os.path.join(ROOT, "data")
 OUT_DIR = os.path.join(ROOT, "assets", "players", "generated")
+SOURCE_DIR = os.path.join(ROOT, "assets", "source", "players")
+SAVE_BLEND = False
 
 BASE_HEIGHT = 1.80
 
@@ -560,6 +563,11 @@ def generate(recipe_id):
 
     build_actions(arm, scale, clips)
 
+    if SAVE_BLEND:
+        # Editable starting point for hand modelling (docs/BLENDER_GUIA.md).
+        os.makedirs(SOURCE_DIR, exist_ok=True)
+        bpy.ops.wm.save_as_mainfile(filepath=os.path.join(SOURCE_DIR, f"{recipe_id}.blend"), compress=True)
+
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, f"{recipe_id}.glb")
     bpy.ops.export_scene.gltf(
@@ -618,6 +626,8 @@ def _add_modern(recipe, lib, scale, arm, skeleton, mats, report):
 
 
 def main(argv):
+    global SAVE_BLEND
+    SAVE_BLEND = "--save-blend" in argv
     ids = [a for a in argv if not a.startswith("--")]
     if "--all" in argv or not ids:
         ids = sorted(f[:-5] for f in os.listdir(os.path.join(DATA, "appearance"))

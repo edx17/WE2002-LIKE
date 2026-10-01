@@ -1,0 +1,2 @@
+Poné acá tus jugadores hechos a mano (<appearance>.glb).
+Reemplazan al generado con el mismo nombre. Ver docs/BLENDER_GUIA.md.
