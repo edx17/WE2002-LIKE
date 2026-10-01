@@ -37,6 +37,9 @@ GROUP = {"GK": "GK", "CB": "CB", "LB": "FB", "RB": "FB", "LWB": "FB", "RWB": "FB
 NUMBERS = {"GK": [1], "LB": [3], "CB": [4, 2, 5], "RB": [2], "LMF": [11], "RMF": [7], "CMF": [8, 6], "DMF": [5],
            "WG": [7, 11], "CF": [9, 10], "LWB": [3], "RWB": [2]}
 
+# Five substitutes per team (WE2002: three changes allowed).
+BENCH_ROLES = ["GK", "CB", "CMF", "RMF", "CF"]
+
 SQUADS = [
     {"prefix": "cap", "team": "team_a", "formation": "4-4-2", "tactics": "equilibrado", "attack_dir": 1, "first_number": 1},
     {"prefix": "dvs", "team": "team_b", "formation": "4-3-3", "tactics": "presion_alta", "attack_dir": -1, "first_number": 21},
@@ -56,9 +59,10 @@ def main():
     name_counter = 11
     for squad in SQUADS:
         form = json.load(open(os.path.join(DATA, "formations", squad["formation"] + ".json"), encoding="utf-8"))
-        used_numbers, entries = set(), []
-        for i, slot in enumerate(form["slots"]):
-            role = slot["role"]
+        used_numbers, entries, bench = set(), [], []
+        roles = [slot["role"] for slot in form["slots"]] + BENCH_ROLES
+        for i, role in enumerate(roles):
+            on_bench = i >= len(form["slots"])
             pid = f"{squad['prefix']}_{i + 1:02d}"
             number = next((n for n in NUMBERS.get(role, []) if n not in used_numbers), None)
             if number is None:
@@ -82,13 +86,19 @@ def main():
                 "boot_color": rng.choice(["#111111", "#111111", "#f2f2f2", "#1e3a8a", "#b91c1c"]),
                 "skin": rng.randrange(len(lib["skin_tones"])), "height": height,
                 "weight": round(height * height * rng.uniform(21.5, 25.0)), "facial_hair": rng.choice([0, 0, 0, 1, 2, 3])})
+            if on_bench:
+                bench.append({"id": pid})
+                continue
             entries.append({"id": pid, "control": "human" if squad["prefix"] == "cap" and role == "CF" and
                             not any(e["control"] == "human" for e in entries) else "ai"})
         match_teams.append({"id": squad["team"], "attack_dir": squad["attack_dir"], "formation": squad["formation"],
-                            "tactics": squad["tactics"], "players": entries})
+                            "tactics": squad["tactics"], "players": entries, "bench": bench})
     write(os.path.join(DATA, "matches", "stage3_11v11.json"), {
         "name": "Etapa 3 — 11 vs 11", "direction_steps": 8, "teams": match_teams})
-    print("squads written: 22 players, 22 appearances, data/matches/stage3_11v11.json")
+    write(os.path.join(DATA, "matches", "stage4_partido.json"), {
+        "name": "Etapa 4 — partido completo", "direction_steps": 8, "half_minutes": 5,
+        "referee": True, "referee_strictness": 0.5, "max_substitutions": 3, "teams": match_teams})
+    print("squads written: 32 players (22 + 10 subs), appearances, stage3_11v11 and stage4_partido")
 
 
 if __name__ == "__main__":

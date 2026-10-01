@@ -24,7 +24,8 @@ static func ensure_actions() -> void:
 	_add(&"camera_zoom", [KEY_C], [JOY_BUTTON_BACK])
 	_add(&"toggle_debug", [KEY_F3], [])
 	_add(&"toggle_help", [KEY_F1], [])
-	_add(&"reset_match", [KEY_R], [JOY_BUTTON_START])
+	_add(&"reset_match", [KEY_R], [])
+	_add(&"pause_menu", [KEY_ESCAPE, KEY_P], [JOY_BUTTON_START])
 
 
 static func _add(action: StringName, keys: Array, buttons: Array, axes: Array = []) -> void:

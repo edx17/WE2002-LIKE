@@ -2,12 +2,12 @@
   "id": "p_dvs_04",
   "body": 1,
   "face": 1,
-  "hair": 2,
+  "hair": 3,
   "hair_color": 4,
-  "boot": 2,
-  "boot_color": "#1e3a8a",
+  "boot": 0,
+  "boot_color": "#111111",
   "skin": 4,
-  "height": 1.92,
-  "weight": 83,
-  "facial_hair": 2
+  "height": 1.88,
+  "weight": 86,
+  "facial_hair": 1
 }

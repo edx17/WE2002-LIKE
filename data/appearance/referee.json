@@ -1,0 +1,12 @@
+{
+  "id": "referee",
+  "body": 1,
+  "face": 0,
+  "hair": 2,
+  "hair_color": 5,
+  "boot": 0,
+  "boot_color": "#111111",
+  "skin": 1,
+  "height": 1.8,
+  "weight": 78
+}

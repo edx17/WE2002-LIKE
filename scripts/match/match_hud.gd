@@ -12,6 +12,9 @@ var _bar_label: Label
 var _debug: Label
 var _help: Label
 var _name_bar: Label
+var _card_panel: ColorRect
+var _card_label: Label
+var _card_time := 0.0
 var _message_time := 0.0
 
 const BAR_WIDTH := 260.0
@@ -56,6 +59,23 @@ func setup(m: MatchController) -> void:
 	bar_bg.set_border_width_all(2)
 	_name_bar.add_theme_stylebox_override(&"normal", bar_bg)
 
+	# Card shown by the referee: coloured card + player.
+	_card_panel = ColorRect.new()
+	_card_panel.size = Vector2(46, 64)
+	_card_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_card_panel.offset_left = -200
+	_card_panel.offset_top = 70
+	_card_panel.offset_right = -154
+	_card_panel.offset_bottom = 134
+	_card_panel.visible = false
+	add_child(_card_panel)
+	_card_label = _label(24, HORIZONTAL_ALIGNMENT_LEFT)
+	_card_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_card_label.offset_left = -140
+	_card_label.offset_top = 84
+	_card_label.offset_right = 300
+	_card_label.visible = false
+
 	_bar_bg = ColorRect.new()
 	_bar_bg.color = Color(0, 0, 0, 0.6)
 	_bar_bg.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -82,6 +102,13 @@ func _label(size: int, align: HorizontalAlignment, parent: Node = null) -> Label
 	return l
 
 
+func show_card(card: String, p: PlayerController) -> void:
+	_card_panel.color = Color(0.98, 0.85, 0.1) if card == FoulJudge.YELLOW else Color(0.85, 0.1, 0.1)
+	var second := card == FoulJudge.RED and p.yellow_cards >= 1
+	_card_label.text = "%s %d  %s%s" % [p.role, p.stats.number, p.stats.name, "  (2ª amarilla)" if second else ""]
+	_card_time = 2.5
+
+
 func flash(text: String, seconds: float, big: bool) -> void:
 	_message.text = text
 	_message.add_theme_font_size_override(&"font_size", 48 if big else 28)
@@ -101,11 +128,13 @@ func _process(delta: float) -> void:
 	var names := []
 	for t in 2:
 		names.append(str(match_ctx.team_data[t].get("short", "EQ%d" % (t + 1))))
-	var secs := int(match_ctx.clock)
-	_score.text = "%s  %d - %d  %s     %02d:%02d" % [names[0], match_ctx.score[0], match_ctx.score[1], names[1], secs / 60, secs % 60]
+	_score.text = "%s  %d - %d  %s     %d'" % [names[0], match_ctx.score[0], match_ctx.score[1], names[1], int(match_ctx.clock)]
 
 	_message_time -= delta
 	_message.visible = _message_time > 0.0
+	_card_time -= delta
+	_card_panel.visible = _card_time > 0.0
+	_card_label.visible = _card_time > 0.0
 
 	var h := match_ctx.human
 	_name_bar.visible = h != null

@@ -25,7 +25,9 @@ var team := 0
 var attack_dir := 1.0
 var formation: Formation
 var tactics := TeamTactics.new()
-var players: Array[PlayerController] = []  # slot order
+var players: Array[PlayerController] = []
+## Player -> formation slot. Survives send-offs and substitutions.
+var _slots := {}
 var match_ctx: MatchController
 var shape := 0.5  # 0 defending .. 1 attacking (smoothed)
 var in_possession := false
@@ -45,7 +47,26 @@ func _init(m: MatchController, team_index: int, form: Formation) -> void:
 
 
 func slot_of(p: PlayerController) -> int:
-	return players.find(p)
+	return int(_slots.get(p, -1))
+
+
+func add_player(p: PlayerController, slot: int) -> void:
+	players.append(p)
+	_slots[p] = slot
+
+
+func remove_player(p: PlayerController) -> void:
+	players.erase(p)
+	_slots.erase(p)
+	set_piece_targets.erase(p)
+	_assignments.erase(p)
+
+
+## Substitution: the new player takes the old one's slot.
+func replace_player(old: PlayerController, new_player: PlayerController) -> void:
+	var slot := slot_of(old)
+	remove_player(old)
+	add_player(new_player, slot)
 
 
 func role_of(p: PlayerController) -> String:

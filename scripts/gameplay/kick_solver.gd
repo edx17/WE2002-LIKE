@@ -10,7 +10,7 @@ extends RefCounted
 ## That is what produces "le pegué mal" instead of "el numerito 84 decidió
 ## que erraba".
 
-enum KickType { GROUND_PASS, THROUGH_PASS, LOB_PASS, CROSS, CHIP, BACK_PASS, ONE_TOUCH, SHOT, HEADER }
+enum KickType { GROUND_PASS, THROUGH_PASS, LOB_PASS, CROSS, CHIP, BACK_PASS, ONE_TOUCH, SHOT, HEADER, THROW_IN }
 
 const TYPE_NAMES := {
 	KickType.GROUND_PASS: "PASE",
@@ -22,6 +22,7 @@ const TYPE_NAMES := {
 	KickType.ONE_TOUCH: "PRIMERA",
 	KickType.SHOT: "REMATE",
 	KickType.HEADER: "CABEZAZO",
+	KickType.THROW_IN: "LATERAL",
 }
 
 ## Maximum horizontal error (degrees) at accuracy 0.
@@ -35,6 +36,7 @@ const MAX_ERROR_DEG := {
 	KickType.ONE_TOUCH: 16.0,
 	KickType.SHOT: 14.0,
 	KickType.HEADER: 18.0,
+	KickType.THROW_IN: 8.0,
 }
 
 const G := Ball.GRAVITY

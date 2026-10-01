@@ -72,6 +72,10 @@ static func evaluate(p: PlayerController) -> Descriptor:
 	d.state_time = p.state_time
 	d.speed_blend = clampf(p.speed / p.sprint_speed(), 0.0, 1.0)
 	d.action = ACTION_NAMES.get(p.state, "")
+	if p.throwing:
+		d.action = "THROW_IN"
+	elif p.has_ball() and p.ball.held and not p.is_keeper:
+		d.action = "THROW_HOLD"
 	if d.action == "DIVE":
 		d.action = "DIVE_LEFT" if DirectionResolver.signed_angle(p.facing, p.dive_velocity.normalized()) > 0.0 else "DIVE_RIGHT"
 	if p.speed < 0.3:

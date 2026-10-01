@@ -1,13 +1,13 @@
 {
   "id": "p_dvs_02",
-  "body": 0,
-  "face": 0,
-  "hair": 2,
-  "hair_color": 5,
+  "body": 2,
+  "face": 2,
+  "hair": 0,
+  "hair_color": 0,
   "boot": 1,
   "boot_color": "#111111",
-  "skin": 3,
-  "height": 1.84,
-  "weight": 74,
-  "facial_hair": 2
+  "skin": 4,
+  "height": 1.86,
+  "weight": 79,
+  "facial_hair": 0
 }

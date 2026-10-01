@@ -55,6 +55,14 @@
     },
     "DIVE_RIGHT": {
       "length": 0.55
+    },
+    "THROW_HOLD": {
+      "length": 1.0,
+      "loop": true
+    },
+    "THROW_IN": {
+      "length": 0.45,
+      "contact": 0.2
     }
   }
 }

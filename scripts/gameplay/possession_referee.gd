@@ -5,7 +5,7 @@ extends RefCounted
 ## class decides football.
 
 signal event(text: String)
-signal foul(offender: PlayerController, victim: PlayerController)
+signal foul(offender: PlayerController, victim: PlayerController, slide: bool)
 
 var ball: Ball
 var players: Array[PlayerController] = []
@@ -36,7 +36,9 @@ func update(delta: float) -> void:
 
 	var owner := ball.owner_player as PlayerController
 	if owner != null and ball.held:
-		ball.carry(owner.global_position + owner.facing * 0.3 + Vector3.UP * 1.05)
+		# Keeper: at the chest. Throw-in: over the head.
+		var hands := Vector3.UP * 1.05 + owner.facing * 0.3 if owner.is_keeper else Vector3.UP * 2.05 - owner.facing * 0.05
+		ball.carry(owner.global_position + hands)
 		return
 	if owner != null:
 		if not owner.can_play_ball() or not owner.interaction.dribble(ball):
@@ -109,9 +111,13 @@ func resolve_tackle(tackler: PlayerController) -> bool:
 		set_cooldown(owner, 0.4)
 		event.emit("QUITE LIMPIO")
 		return true
-	if rng.randf() < 0.15 * tackler.stats.n(&"aggression"):
+	# Missed the ball: did he take the man? More likely from behind or at speed.
+	var behind := owner.facing.dot((owner.global_position - tackler.global_position).normalized()) > 0.3
+	var foul_chance := 0.18 + 0.25 * tackler.stats.n(&"aggression") + (0.3 if behind else 0.0) \
+		+ 0.15 * clampf(tackler.speed / maxf(tackler.sprint_speed(), 0.1), 0.0, 1.0)
+	if rng.randf() < foul_chance * 0.6:
 		owner.knock_down()
-		foul.emit(tackler, owner)
+		foul.emit(tackler, owner, false)
 	return false
 
 
@@ -132,6 +138,6 @@ func check_slide(slider: PlayerController) -> bool:
 			continue
 		if DirectionResolver.flat(p.global_position - slider.global_position).length() < 0.9:
 			p.knock_down()
-			foul.emit(slider, p)
+			foul.emit(slider, p, true)
 			return true
 	return false

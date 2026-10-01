@@ -31,6 +31,7 @@ static var SLIDE_TIME := AnimationTimings.length("SLIDE", 0.8)
 static var FALL_TIME := AnimationTimings.length("FALL", 0.7)
 static var GET_UP_TIME := AnimationTimings.length("GET_UP", 0.45)
 const DIVE_TIME := 0.55
+static var THROW_CONTACT := AnimationTimings.contact("THROW_IN", 0.2)
 
 var stats: PlayerStats = PlayerStats.new()
 var team := 0
@@ -40,6 +41,12 @@ var home_position := Vector3.ZERO
 ## Position on the team sheet: GK, DF, MF, FW.
 var role := "MF"
 var is_keeper := false
+## 0..1. See update_stamina().
+var stamina := 1.0
+var injured := false
+var yellow_cards := 0
+## Throw-in in progress (ball held overhead).
+var throwing := false
 ## This player's own brain; kept even while a human controls him.
 var ai: PlayerAI = null
 ## Object with fill(intent: PlayerIntent, player: PlayerController, delta: float).
@@ -80,11 +87,32 @@ func _ready() -> void:
 # --- attribute-derived tuning -------------------------------------------------
 
 func jog_speed() -> float:
-	return lerpf(5.6, 7.0, stats.n(&"speed"))
+	return lerpf(5.6, 7.0, stats.n(&"speed")) * fitness()
 
 
 func sprint_speed() -> float:
-	return lerpf(7.2, 9.3, stats.n(&"speed"))
+	return lerpf(7.2, 9.3, stats.n(&"speed")) * fitness()
+
+
+## Tiredness and injury slow you down: 1.0 fresh, ~0.82 exhausted.
+func fitness() -> float:
+	var f := 1.0 - 0.18 * clampf((0.6 - stamina) / 0.6, 0.0, 1.0)
+	if injured:
+		f *= 0.8
+	return f
+
+
+## Stamina drains while sprinting and recovers otherwise. Rates are per
+## GAME minute, so a full match tires players the same whatever its length.
+func update_stamina(game_minutes: float) -> void:
+	var endurance := stats.n(&"stamina")
+	if is_sprinting():
+		stamina -= game_minutes * 0.03 * (1.25 - endurance)
+	elif speed < 0.5:
+		stamina += game_minutes * 0.012
+	else:
+		stamina += game_minutes * 0.004
+	stamina = clampf(stamina, 0.0, 1.0)
 
 
 func acceleration() -> float:
@@ -193,6 +221,8 @@ func _update_locomotion(delta: float) -> void:
 				DirectionResolver.quantize(DirectionResolver.to_stick(to_ball).normalized(), direction_steps))
 
 	var top := sprint_speed() if intent.sprint else jog_speed()
+	if carrying and ball.held and not is_keeper:
+		top = 0.0  # throw-in: feet planted, can only turn
 	if carrying:
 		top *= lerpf(0.86, 0.95, stats.n(&"control"))
 
@@ -269,6 +299,8 @@ func _handle_actions() -> void:
 
 
 func _move(delta: float) -> void:
+	if process_mode == Node.PROCESS_MODE_DISABLED:
+		return  # sent off / substituted during this very frame
 	if state == State.DIVE:
 		velocity.x = dive_velocity.x
 		velocity.z = dive_velocity.z
@@ -312,7 +344,8 @@ func _start_dive(target: Vector3) -> void:
 
 
 func _start_kick(action: int, power: float) -> void:
-	if ball.held:
+	throwing = ball.held and not is_keeper
+	if ball.held and not throwing:
 		ball.release_hold(global_position + facing * 0.55)
 	var aim := DirectionResolver.quantize(intent.move, direction_steps)
 	var dir := DirectionResolver.to_world(aim) if aim != Vector2.ZERO else facing
@@ -322,16 +355,21 @@ func _start_kick(action: int, power: float) -> void:
 
 func _update_kick(delta: float) -> void:
 	var windup := SHOT_WINDUP if state == State.SHOOT else PASS_WINDUP
-	speed = move_toward(speed, jog_speed() * 0.35, 18.0 * delta)
+	if throwing:
+		windup = THROW_CONTACT
+	speed = move_toward(speed, 0.0 if throwing else jog_speed() * 0.35, 18.0 * delta)
 	if not _kick.done:
 		# Plant foot: turn quickly towards the kick direction.
 		facing = DirectionResolver.rotate_towards(facing, _kick.dir, turn_rate() * 1.5 * delta)
 		if state_time >= windup:
 			_kick.done = true
-			if has_ball() or interaction.contact_zone(ball.global_position) == BallInteraction.Zone.FOOT:
+			if throwing:
+				_execute_throw(_kick.action, _kick.power, _kick.dir)
+			elif has_ball() or interaction.contact_zone(ball.global_position) == BallInteraction.Zone.FOOT:
 				_execute_kick(_kick.action, _kick.power, _kick.dir, _kick.aim, false, false, 0.0)
 	elif state_time >= windup + FOLLOW_THROUGH:
 		_kick.clear()
+		throwing = false
 		_set_state(_locomotion_state())
 
 
@@ -354,7 +392,7 @@ func _execute_kick(action: int, power: float, dir: Vector3, aim: Vector2, one_to
 	req.power = power
 	req.stats = stats
 	req.contact_quality = 0.85 if header else interaction.contact_quality(ball, dir)
-	req.balance = balance_modifier()
+	req.balance = balance_modifier() * lerpf(0.88, 1.0, clampf(stamina / 0.5, 0.0, 1.0))
 	req.pressure = match_ctx.pressure_on(self) if match_ctx else 0.0
 	req.movement = clampf(speed / sprint_speed(), 0.0, 1.0)
 	req.weak_foot = not header and interaction.is_weak_foot(ball)
@@ -372,6 +410,28 @@ func _execute_kick(action: int, power: float, dir: Vector3, aim: Vector2, one_to
 		match_ctx.referee.set_cooldown(self, 0.5)
 	last_kick_type = req.type
 	kicked.emit(self, req.type, result)
+
+
+## Throw-in: both hands from over the head, an arc to the target.
+func _execute_throw(action: int, power: float, dir: Vector3) -> void:
+	var type := KickSolver.KickType.LOB_PASS if action == PlayerIntent.Action.LOB else KickSolver.KickType.GROUND_PASS
+	var target := match_ctx.pass_target(self, type, dir, power) if match_ctx else global_position + dir * 15.0
+	var flat := DirectionResolver.flat(target - ball.global_position)
+	var dist := clampf(flat.length(), 4.0, 32.0)
+	var rng := match_ctx.rng if match_ctx else RandomNumberGenerator.new()
+	var err := rng.randfn(0.0, 0.5) * 8.0 * (1.0 - stats.n(&"passing"))
+	var angle := deg_to_rad(lerpf(18.0, 32.0, dist / 32.0))
+	var v := minf(sqrt(Ball.GRAVITY * dist / sin(2.0 * angle)) * 0.97, 17.0)
+	var d := flat.normalized().rotated(Vector3.UP, deg_to_rad(err))
+	var result := KickSolver.KickResult.new()
+	result.velocity = d * cos(angle) * v + Vector3.UP * sin(angle) * v
+	result.accuracy = 1.0 - absf(err) / 8.0
+	result.error_deg = err
+	ball.kick(result.velocity, Vector3.ZERO, self)
+	if match_ctx:
+		match_ctx.referee.set_cooldown(self, 0.5)
+	last_kick_type = KickSolver.KickType.THROW_IN
+	kicked.emit(self, KickSolver.KickType.THROW_IN, result)
 
 
 func _kick_type(action: int, dir: Vector3, header: bool) -> int:

@@ -1,0 +1,148 @@
+{
+  "name": "Etapa 4 — partido completo",
+  "direction_steps": 8,
+  "half_minutes": 5,
+  "referee": true,
+  "referee_strictness": 0.5,
+  "max_substitutions": 3,
+  "teams": [
+    {
+      "id": "team_a",
+      "attack_dir": 1,
+      "formation": "4-4-2",
+      "tactics": "equilibrado",
+      "players": [
+        {
+          "id": "cap_01",
+          "control": "ai"
+        },
+        {
+          "id": "cap_02",
+          "control": "ai"
+        },
+        {
+          "id": "cap_03",
+          "control": "ai"
+        },
+        {
+          "id": "cap_04",
+          "control": "ai"
+        },
+        {
+          "id": "cap_05",
+          "control": "ai"
+        },
+        {
+          "id": "cap_06",
+          "control": "ai"
+        },
+        {
+          "id": "cap_07",
+          "control": "ai"
+        },
+        {
+          "id": "cap_08",
+          "control": "ai"
+        },
+        {
+          "id": "cap_09",
+          "control": "ai"
+        },
+        {
+          "id": "cap_10",
+          "control": "human"
+        },
+        {
+          "id": "cap_11",
+          "control": "ai"
+        }
+      ],
+      "bench": [
+        {
+          "id": "cap_12"
+        },
+        {
+          "id": "cap_13"
+        },
+        {
+          "id": "cap_14"
+        },
+        {
+          "id": "cap_15"
+        },
+        {
+          "id": "cap_16"
+        }
+      ]
+    },
+    {
+      "id": "team_b",
+      "attack_dir": -1,
+      "formation": "4-3-3",
+      "tactics": "presion_alta",
+      "players": [
+        {
+          "id": "dvs_01",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_02",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_03",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_04",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_05",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_06",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_07",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_08",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_09",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_10",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_11",
+          "control": "ai"
+        }
+      ],
+      "bench": [
+        {
+          "id": "dvs_12"
+        },
+        {
+          "id": "dvs_13"
+        },
+        {
+          "id": "dvs_14"
+        },
+        {
+          "id": "dvs_15"
+        },
+        {
+          "id": "dvs_16"
+        }
+      ]
+    }
+  ]
+}

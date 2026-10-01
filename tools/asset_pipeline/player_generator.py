@@ -488,6 +488,22 @@ def clip_pose(name, t, spec):
                 "LowerArm.L": (-10, 0, 0), "LowerArm.R": (-10, 0, 0), "UpperLeg.L": (-15 * u, 0, 10 * sx * u),
                 "UpperLeg.R": (10 * u, 0, 10 * sx * u), "LowerLeg.L": (25 * u, 0, 0), "Neck": (0, -20 * sx * u, 0)}, \
             (0.45 * u * sx, 0, -0.62 * u)
+    if name == "THROW_HOLD":
+        b = math.sin(2 * math.pi * t)
+        return {"UpperArm.L": (-170, -12, 0), "UpperArm.R": (-170, 12, 0), "LowerArm.L": (-70, 0, 0),
+                "LowerArm.R": (-70, 0, 0), "Spine": (-6 + 1.5 * b, 0, 0), "UpperLeg.L": (-6, 0, 0),
+                "UpperLeg.R": (4, 0, 0)}, (0, 0, 0)
+    if name == "THROW_IN":
+        c = spec["contact"] / spec["length"]
+        if t < c:
+            u = t / c
+            arms, elbows, spine = -170 - 15 * u, -70 - 30 * u, -6 - 12 * u
+        else:
+            u = (t - c) / (1 - c)
+            arms, elbows, spine = -185 + 105 * u, -100 + 85 * u, -18 + 30 * u
+        return {"UpperArm.L": (arms, -12, 0), "UpperArm.R": (arms, 12, 0), "LowerArm.L": (elbows, 0, 0),
+                "LowerArm.R": (elbows, 0, 0), "Spine": (spine, 0, 0), "Chest": (spine * 0.4, 0, 0),
+                "UpperLeg.L": (-10, 0, 0), "UpperLeg.R": (6, 0, 0)}, (0, 0, 0)
     if name == "CELEBRATE":
         j = abs(math.sin(2 * math.pi * t))
         return {"UpperArm.L": (-165, -25, 0), "UpperArm.R": (-165, 25, 0), "LowerArm.L": (-20, 0, 0),

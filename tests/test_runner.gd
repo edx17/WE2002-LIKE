@@ -47,6 +47,12 @@ func _run() -> void:
 	await _test_offside()
 	await _test_set_pieces()
 	await _test_11v11_soak()
+	await _test_match_time()
+	await _test_fouls_and_cards()
+	await _test_penalty()
+	await _test_throw_in()
+	await _test_substitutions()
+	await _test_referee_and_menu()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -563,5 +569,181 @@ func _test_11v11_soak() -> void:
 	check(samples > 0 and spread / samples < 10.0, "línea de 4 en bloque: %.1f m entre el más adelantado y el más atrasado" % (spread / maxf(samples, 1)))
 	check(m.stats.passes_completed >= 20, "11v11: %d pases completados de %d" % [m.stats.passes_completed, m.stats.passes])
 	m.queue_free()
+	await _frames(1)
+
+
+func _frozen_match(id: String) -> MatchController:
+	var m := _new_match(id)
+	await _frames(2)
+	for p in m.players:
+		p.input_source = null
+	return m
+
+
+func _test_match_time() -> void:
+	print("Tiempo de juego")
+	var m := _new_match("stage4_partido")
+	await _frames(2)
+	m.half_seconds = 1.5
+	var d0 := m.players[0].attack_dir
+	var p0 := m.players[0]
+	for i in 120 * 6:
+		await physics_frame
+		if m.half == 2 and m.phase == MatchController.Phase.PLAYING:
+			break
+	check(m.half == 2 and p0.attack_dir == -d0 and m.brain_for(0).attack_dir == -d0,
+		"en el entretiempo los equipos cambian de arco")
+	for i in 120 * 6:
+		await physics_frame
+		if m.phase == MatchController.Phase.FINISHED:
+			break
+	check(m.phase == MatchController.Phase.FINISHED and int(m.clock) == 90, "a los 90' termina el partido")
+	m.queue_free()
+	await _frames(1)
+	var p := PlayerController.new()
+	p.stats = PlayerStats.new()
+	var fresh := p.sprint_speed()
+	p.intent.sprint = true
+	p.speed = 9.0
+	for i in 60:
+		p.update_stamina(1.0)
+	check(p.stamina < 0.3 and p.sprint_speed() < fresh * 0.9,
+		"sprintar cansa: energía %d%%, velocidad máx %.1f → %.1f m/s" % [roundi(p.stamina * 100), fresh, p.sprint_speed()])
+	p.free()
+
+
+func _test_fouls_and_cards() -> void:
+	print("Faltas y tarjetas")
+	var m := await _frozen_match("stage4_partido")
+	var attacker: PlayerController = m.players.filter(func(x: PlayerController) -> bool: return x.team == 0 and not x.is_keeper)[0]
+	var defender: PlayerController = m.players.filter(func(x: PlayerController) -> bool: return x.team == 1 and not x.is_keeper)[0]
+	for p in m.players:
+		if p != attacker and p != defender and not p.is_keeper:
+			p.teleport(Vector3(-30, 0, p.global_position.z), Vector3.RIGHT)
+	# Last man: through on goal, fouled from behind -> straight red.
+	attacker.teleport(Vector3(32, 0, 0), Vector3.RIGHT)
+	defender.teleport(Vector3(31, 0, 0), Vector3.RIGHT)
+	m.ball.place(Vector3(32.6, Ball.RADIUS, 0))
+	await _frames(5)
+	var v := m.foul_judge.judge(defender, attacker, true)
+	check(v.dogso and v.card == FoulJudge.RED, "último hombre, ocasión manifiesta: roja directa")
+	# Second yellow becomes red.
+	defender.yellow_cards = 1
+	m.foul_judge.rng.seed = 1
+	var reds := 0
+	for i in 20:
+		var vv := m.foul_judge.judge(defender, attacker, true)
+		if vv.card == FoulJudge.RED:
+			reds += 1
+	check(reds == 20, "con una amarilla encima, la segunda es roja")
+	# A red card sends him off; his team plays with one less, slots intact.
+	var brain := m.brain_for(1)
+	var roles_before := {}
+	for p in brain.players:
+		if p != defender:
+			roles_before[p] = brain.role_of(p)
+	var team_size := m.players.filter(func(x: PlayerController) -> bool: return x.team == 1).size()
+	m.send_off(defender)
+	var same := true
+	for p in roles_before:
+		same = same and brain.role_of(p) == roles_before[p]
+	check(m.players.filter(func(x: PlayerController) -> bool: return x.team == 1).size() == team_size - 1 and same,
+		"expulsado: el equipo queda con uno menos y el resto mantiene su puesto")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_penalty() -> void:
+	print("Penal")
+	var m := await _frozen_match("stage4_partido")
+	var attacker: PlayerController = m.players.filter(func(x: PlayerController) -> bool: return x.team == 0 and not x.is_keeper)[0]
+	var defender: PlayerController = m.players.filter(func(x: PlayerController) -> bool: return x.team == 1 and not x.is_keeper)[0]
+	attacker.teleport(Vector3(44, 0, 3), Vector3.RIGHT)
+	defender.teleport(Vector3(43, 0, 3), Vector3.RIGHT)
+	var kinds: Array = []
+	m.restarted.connect(func(k: String) -> void: kinds.append(k))
+	m._on_foul(defender, attacker, true)
+	for i in 120 * 3:
+		await physics_frame
+		if not kinds.is_empty():
+			break
+	check(not kinds.is_empty() and kinds[0] == "PENAL", "falta dentro del área: penal")
+	var spot := Vector3(PitchBuilder.HALF_LENGTH - 11.0, 0, 0)
+	check(DirectionResolver.flat(m.ball.global_position).distance_to(spot) < 0.8, "la pelota va al punto penal")
+	var inside := 0
+	for p in m.players:
+		if p != m.set_piece.get("taker") and not p.is_keeper and m.in_penalty_area(p.global_position, 1.0):
+			inside += 1
+	check(inside == 0, "nadie más dentro del área al patear")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_throw_in() -> void:
+	print("Lateral con la mano")
+	var m := _new_match("stage4_partido")
+	await _frames(2)
+	m._restart_at(0, Vector3(10, 0, PitchBuilder.HALF_WIDTH - 0.3), "LATERAL")
+	await _frames(10)
+	var taker: PlayerController = m.set_piece.taker
+	check(m.ball.held and m.ball.global_position.y > 1.8, "el que saca sostiene la pelota sobre la cabeza")
+	taker.input_source = taker.ai
+	var thrown := false
+	for i in 120 * 4:
+		await physics_frame
+		if taker.last_kick_type == KickSolver.KickType.THROW_IN:
+			thrown = true
+			break
+	check(thrown and not m.ball.held and m.ball.linear_velocity.length() > 3.0, "y la tira con las manos al campo")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_substitutions() -> void:
+	print("Cambios")
+	var m := await _frozen_match("stage4_partido")
+	var out: PlayerController = m.players.filter(func(x: PlayerController) -> bool: return x.team == 0 and x.role == "CF")[0]
+	var slot := m.brain_for(0).slot_of(out)
+	var in_id: String = m.bench[0][4]
+	check(m.request_substitution(out, in_id), "se pide un cambio")
+	check(out in m.players, "no se hace con la pelota en juego")
+	m._stop("TEST", 0.2, func() -> void: pass)
+	var newcomer: PlayerController = null
+	for p in m.players:
+		if p.stats.id == in_id:
+			newcomer = p
+	check(newcomer != null and not (out in m.players) and m.brain_for(0).slot_of(newcomer) == slot and m.subs_used[0] == 1,
+		"en la detención entra el suplente en el mismo puesto")
+	# AI coach: an injured computer player is replaced at the next stoppage.
+	var hurt: PlayerController = m.players.filter(func(x: PlayerController) -> bool: return x.team == 1 and x.role == "CB")[0]
+	hurt.injured = true
+	await _frames(30)
+	m._stop("TEST", 0.2, func() -> void: pass)
+	check(not (hurt in m.players) and m.subs_used[1] == 1, "el DT de la máquina saca al lesionado")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_referee_and_menu() -> void:
+	print("Árbitro y menú de pausa")
+	var m := _new_match("stage4_partido")
+	var near := 0
+	for i in 120 * 20:
+		await physics_frame
+		if i % 12 == 0 and m.official.global_position.distance_to(m.ball.global_position) < 35.0:
+			near += 1
+	check(m.official != null and near > 150, "el árbitro sigue la jugada (%d/200 muestras cerca)" % near)
+	check(m.ball.last_touch != m.official, "el árbitro nunca toca la pelota")
+	m.queue_free()
+	await _frames(1)
+	var hm := MATCH_SCENE.instantiate() as MatchController
+	hm.match_id = "stage4_partido"
+	root.add_child(hm)
+	await _frames(2)
+	hm.pause_menu.open()
+	check(paused and hm.pause_menu.visible, "Esc/Start pausa el partido y abre el menú")
+	hm.pause_menu.close()
+	check(not paused, "y al cerrarlo sigue")
+	hm.queue_free()
 	await _frames(1)
 

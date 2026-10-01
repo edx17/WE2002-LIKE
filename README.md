@@ -14,8 +14,8 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 | **0** Dos muñecos y una pelota | campo, jugador, pelota, cámara: correr → controlar → girar → patear | ✅ jugable (`--match=stage0_solo`) |
 | **1** 1 vs 1 | control, pase, remate, recuperación, choque, quite, barrida, cambio de dirección, balón dividido | ✅ jugable (`--match=stage1_1v1`) |
 | **2** 5 vs 5 | formación en JSON, bloque que se desplaza, presión de un solo jugador, cobertura, marca, apoyo, desmarque, pases entre IA, arqueros, cambio de jugador | ✅ jugable (`--match=stage2_5v5`) |
-| **3** 11 vs 11 | 4-4-2 / 4-3-3 / 3-5-2, puestos, tácticas (presión, línea, amplitud, compacidad), línea de 4 en bloque, trampa del offside, fuera de juego, córners y tiros libres con barrera | ✅ jugable (por defecto) |
-| **4** El monstruo | faltas completas, penales, tiros libres, córners, laterales, tarjetas, árbitro… | 🟡 ya hay fuera de juego, córner y tiro libre con barrera; lateral, saque de arco y faltas simplificados |
+| **3** 11 vs 11 | 4-4-2 / 4-3-3 / 3-5-2, puestos, tácticas (presión, línea, amplitud, compacidad), línea de 4 en bloque, trampa del offside, fuera de juego, córners y tiros libres con barrera | ✅ jugable (`--match=stage3_11v11`) |
+| **4** El monstruo | dos tiempos y cambio de arco, energía, faltas con severidad, ventaja, amarillas/rojas, expulsión, lesiones, penales, lateral con la mano, árbitro en cancha, suplentes, DT de la máquina, menú de pausa con cambios/táctica/formación | ✅ jugable (por defecto) |
 | Assets | pipeline receta JSON → Blender → GLB → Godot. Estilo **classic** (diseño WE2002: cuadrado, low-poly, cara pintada) por defecto y **modern** (esculpido) opcional. Dorsales, escudo, manga corta/larga, 13 clips | 🟡 jugadores generados; animaciones procedurales |
 | Ingeniería inversa | 20 métricas de comportamiento, sonda que mide nuestro motor, protocolo de medición | 🟡 falta medir WE2002 |
 | Después | estadios, caras, público, menús, repeticiones, Master League-like, editor | — |
@@ -26,7 +26,9 @@ rápidas, movimiento en 8/16 direcciones, IA sencilla pero con criterio y cámar
 2. O por línea de comandos:
 
 ```bash
-godot --path .                          # 11v11 contra la IA
+godot --path .                          # partido completo 11v11 (2 tiempos de 5 min)
+godot --path . -- --half-minutes=10     # tiempos más largos
+godot --path . -- --match=stage3_11v11  # 11v11 sin reloj
 godot --path . -- --match=stage2_5v5    # 5v5
 godot --path . -- --match=stage1_1v1    # 1v1
 godot --path . -- --match=stage0_solo   # etapa 0: solo vos y la pelota
@@ -45,6 +47,7 @@ godot --path . -- --attract             # IA contra IA
 | Globo / centro | L | B |
 | Cambiar de jugador | Q | LB |
 | Cambiar táctica (equilibrado / presión alta / repliegue) | T | click stick der. |
+| Pausa: cambios, táctica, formación, reiniciar | Esc / P | Start |
 | **Sin pelota, rival la tiene:** mantener PASE = presionar · tocar PASE = quite · REMATE = barrida | | |
 | **Sin pelota, pelota suelta:** soltar cualquier botón = acción **de primera** al llegar la pelota | | |
 | 8 ↔ 16 direcciones | F2 | click stick izq. |
@@ -170,6 +173,37 @@ docs/     INGENIERIA_INVERSA.md  PIPELINE_ASSETS.md
 - **Planteles:** `tools/data/make_squads.py` genera los dos planteles de 11 (atributos según el
   puesto y aspecto propio de cada uno) y el partido `stage3_11v11`.
 
+## Etapa 4: el partido completo
+
+- **Tiempo:** dos tiempos (`half_minutes` en `data/matches/stage4_partido.json`, 5 minutos
+  reales por defecto) con reloj de 0' a 90'. En el entretiempo los equipos cambian de arco, y
+  a los 90' se termina el partido (R para jugar otro).
+- **Energía:** sprintar cansa y caminar recupera. Un jugador cansado corre menos (hasta un
+  −18 %) y patea peor. El desgaste se mide en minutos de juego, así que un partido corto cansa
+  igual que uno largo.
+- **El árbitro** (`FoulJudge`):
+  - La severidad de una falta crece con la barrida, la entrada de atrás, la velocidad y la
+    agresividad.
+  - Último hombre con ocasión manifiesta: roja directa. Severidad alta: roja. Media: amarilla.
+    Segunda amarilla: roja.
+  - Falta dentro del área: penal.
+  - Si el equipo que recibió la falta sigue con la pelota hay **ventaja**, y si la pierde en
+    1,5 s se vuelve a la falta.
+  - Las entradas fuertes pueden lesionar.
+  - La rigurosidad se configura con `referee_strictness`.
+- **Expulsados:** el equipo juega con uno menos y el resto mantiene su puesto.
+- **Penales:** patea el mejor definidor y el resto queda fuera del área. La máquina elige
+  palo y el arquero vuela.
+- **Lateral con la mano:** el que saca no puede mover los pies, levanta la pelota sobre la
+  cabeza y la tira (corta o larga), con animaciones propias.
+- **Árbitro en cancha:** corre la diagonal clásica, siempre cerca de la jugada, y nunca toca la
+  pelota ni choca con nadie. La tarjeta aparece en pantalla con el jugador.
+- **Suplentes:** cinco por equipo y tres cambios. Los cambios se hacen en la próxima pelota
+  parada. El DT de la máquina saca primero a los lesionados y después del 55' a los más cansados,
+  respetando el puesto.
+- **Menú de pausa** (Esc / Start): reanudar, táctica, formación (4-4-2 / 4-3-3 / 3-5-2),
+  cambios con la energía de cada jugador, reiniciar.
+
 ## Ingeniería inversa y assets
 
 Dos objetivos separados:
@@ -207,14 +241,16 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-71 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+90 comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
 completo con la misma entrada que un humano, el modelo generado con su AnimationTree
 siguiendo al gameplay, 90 s de IA contra IA en 1v1 y 120 s de 5v5 midiendo comportamiento de equipo (sin
 enjambre alrededor de la pelota, distancia entre compañeros, arqueros en su zona, pases
 completados, remates), el cambio de jugador, el fuera de juego (adelantado y habilitado), el
-córner, la barrera y 90 s de 11v11 midiendo la línea de 4 y los pases. `tests/behavior_probe.gd` compara contra la
+córner, la barrera, 90 s de 11v11 midiendo la línea de 4 y los pases, y la etapa 4:
+entretiempo y final, energía, roja por último hombre, segunda amarilla, expulsión, penal,
+lateral con la mano, cambios pedidos y del DT, árbitro y menú de pausa. `tests/behavior_probe.gd` compara contra la
 referencia de WE2002. Corren en CI con
 GitHub Actions.
 

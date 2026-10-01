@@ -190,6 +190,12 @@ func _take_set_piece(p: PlayerController) -> void:
 		return  # let everyone take position
 	var kind := str(m.set_piece.kind)
 	var dist := p.global_position.distance_to(m.goal_center(p.attack_dir))
+	if kind == "PENAL":
+		# Pick a corner; well-hit and low.
+		_move = Vector2(p.attack_dir, 1.0 if rng.randf() < 0.5 else -1.0).normalized()
+		_release = PlayerIntent.Action.SHOOT
+		_release_charge = rng.randf_range(0.5, 0.72)
+		return
 	if kind == "TIRO LIBRE" and dist < 27.0 and rng.randf() < 0.65:
 		_shoot(p, dist)
 		return

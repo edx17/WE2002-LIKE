@@ -1,0 +1,9 @@
+{
+  "id": "referee",
+  "pattern": "plain",
+  "primary": "#151515",
+  "secondary": "#2a2a2a",
+  "collar": "#e6e6e6",
+  "shorts": "#151515",
+  "socks": "#151515"
+}

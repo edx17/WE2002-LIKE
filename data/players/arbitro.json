@@ -1,0 +1,10 @@
+{
+  "name": "Árbitro",
+  "number": 0,
+  "position": "REF",
+  "appearance": "referee",
+  "speed": 74,
+  "acceleration": 70,
+  "agility": 70,
+  "stamina": 90
+}

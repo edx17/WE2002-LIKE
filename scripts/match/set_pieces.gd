@@ -13,7 +13,9 @@ const WALL_DISTANCE := 9.15
 
 
 static func min_distance(kind: String) -> float:
-	return 3.0 if kind == "LATERAL" else WALL_DISTANCE
+	if kind == "LATERAL":
+		return 3.0
+	return 12.0 if kind == "PENAL" else WALL_DISTANCE
 
 
 static func arrange(m: MatchController, kind: String, team: int, spot: Vector3, taker: PlayerController) -> void:
@@ -25,6 +27,8 @@ static func arrange(m: MatchController, kind: String, team: int, spot: Vector3, 
 			_corner(m, team, spot, taker)
 		"TIRO LIBRE":
 			_free_kick(m, team, spot)
+		"PENAL":
+			_penalty(m, team, spot, taker)
 
 
 static func _corner(m: MatchController, team: int, spot: Vector3, taker: PlayerController) -> void:
@@ -69,6 +73,30 @@ static func _corner(m: MatchController, team: int, spot: Vector3, taker: PlayerC
 			var line := Vector3(gx - a * 0.6, 0, side * 1.0)
 			defn.set_piece_targets[p] = line
 			p.teleport(line, Vector3(-a, 0, 0))
+
+
+## Everyone except taker and keeper outside the box and behind the ball;
+## keeper on his line. Nobody moves until the kick.
+static func _penalty(m: MatchController, team: int, spot: Vector3, taker: PlayerController) -> void:
+	var a := signf(spot.x)
+	var gx := a * PitchBuilder.HALF_LENGTH
+	var i := 0
+	for p in m.players:
+		var brain := m.brain_for(p.team)
+		if p == taker or brain == null:
+			continue
+		var pos: Vector3
+		if p.is_keeper and p.team != team:
+			pos = Vector3(gx - a * 0.3, 0, 0)
+		elif p.is_keeper:
+			pos = brain.kickoff_position(p)
+		else:
+			# Arc of players just outside the area, behind the penalty spot.
+			var z := (i % 10 - 4.5) * 3.2
+			pos = Vector3(gx - a * (19.5 + (i / 10) * 2.0), 0, z)
+			i += 1
+		brain.set_piece_targets[p] = pos
+		p.teleport(pos, Vector3(a, 0, 0) if p.team == team else Vector3(-a, 0, 0))
 
 
 static func _free_kick(m: MatchController, team: int, spot: Vector3) -> void:

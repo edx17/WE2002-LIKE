@@ -9,7 +9,7 @@ extends Node3D
 const PLAYER_SCENE_PATH := "res://scenes/players/Player.tscn"
 const BALL_SCENE_PATH := "res://scenes/ball/Ball.tscn"
 
-enum Phase { PLAYING, STOPPED }
+enum Phase { PLAYING, STOPPED, FINISHED }
 
 signal goal_scored(team: int)
 signal restarted(kind: String)
@@ -18,7 +18,7 @@ signal restarted(kind: String)
 ##   godot -- --match=stage0_solo
 ##   godot -- --attract          (every player driven by AI)
 ##   godot -- --zoom=0           (camera zoom level: 0 close, 1 normal, 2 wide)
-@export var match_id := "stage3_11v11"
+@export var match_id := "stage4_partido"
 ## Disable to drive every player from AI/scripts (tests, attract mode).
 @export var allow_human := true
 
@@ -30,12 +30,33 @@ var score := [0, 0]
 var team_data: Array[Dictionary] = [{}, {}]
 var human: PlayerController = null
 var phase: int = Phase.PLAYING
+## Game time in minutes (0..90), driven by real seconds via half_seconds.
 var clock := 0.0
+var half := 1
+## Real seconds per half (WE-style short matches). Match setup "half_minutes".
+var half_seconds := 300.0
+var _kicked_off_first := 0
 var direction_steps := 8
 var last_kick_text := ""
+## Last foul verdict (HUD, tests).
+var last_foul := {}
 ## One TeamBrain per team when the match setup gives formations (5v5+).
 var brains: Array = [null, null]
 var offside: OffsideRule
+var foul_judge: FoulJudge
+## Players sent off (out of the match).
+var sent_off: Array[PlayerController] = []
+var pause_menu: PauseMenu
+## Substitutes still on the bench (player ids), per team.
+var bench: Array = [[], []]
+var subs_used := [0, 0]
+var max_substitutions := 3
+var queued_subs: Array[Dictionary] = []
+var _team_kits: Array = [{}, {}]
+## The match official on the pitch (not in `players`: never plays the ball).
+var official: PlayerController = null
+## Advantage being played: {foul, team, time}.
+var _advantage := {}
 ## Dead ball being taken: {kind, team, taker, time}; empty in open play.
 var set_piece := {}
 
@@ -65,6 +86,10 @@ func _ready() -> void:
 			camera.zoom_index = clampi(int(arg.trim_prefix("--zoom=")), 0, camera.zoom_levels.size() - 1)
 	var setup := DataLoader.load_match(match_id)
 	direction_steps = int(setup.get("direction_steps", 8))
+	half_seconds = float(setup.get("half_minutes", 5.0)) * 60.0
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--half-minutes="):
+			half_seconds = float(arg.trim_prefix("--half-minutes=")) * 60.0
 
 	var look := LookProfile.load_profile(str(setup.get("look", LookProfile.DEFAULT)))
 	LookProfile.apply_to_scene(self, look)
@@ -73,6 +98,10 @@ func _ready() -> void:
 	ball = (load(BALL_SCENE_PATH) as PackedScene).instantiate() as Ball
 	add_child(ball)
 	offside = OffsideRule.new(self)
+	foul_judge = FoulJudge.new(self)
+	foul_judge.rng = rng
+	foul_judge.strictness = float(setup.get("referee_strictness", 0.5))
+	max_substitutions = int(setup.get("max_substitutions", 3))
 	referee = PossessionReferee.new(ball)
 	referee.rng = rng
 	referee.event.connect(func(text: String) -> void: hud.flash(text, 0.8, false))
@@ -82,9 +111,14 @@ func _ready() -> void:
 	for t in teams.size():
 		_spawn_team(t, teams[t])
 	referee.players = players
+	if bool(setup.get("referee", true)) and brains[0] != null:
+		_spawn_official()
 
 	camera.ball = ball
 	hud.setup(self)
+	pause_menu = PauseMenu.new()
+	add_child(pause_menu)
+	pause_menu.setup(self)
 	kickoff(0)
 
 
@@ -110,31 +144,15 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		brain.attack_dir = attack
 		brain.tactics = TeamTactics.load_id(str(entry.get("tactics", "")))
 		brains[index] = brain
-	var player_scene := load(PLAYER_SCENE_PATH) as PackedScene
+	_team_kits[index] = {"kit": kit, "gk_kit": gk_kit, "primary": primary, "secondary": secondary,
+		"short": str(team.get("short", "T%d" % index)), "attack": attack}
+	bench[index] = []
+	for be: Dictionary in entry.get("bench", []):
+		bench[index].append(str(be.get("id", "")))
 	var entries: Array = entry.get("players", [])
 	for slot in entries.size():
 		var pe: Dictionary = entries[slot]
-		var p := player_scene.instantiate() as PlayerController
-		p.stats = DataLoader.load_player(str(pe.get("id", "")))
-		p.name = "%s_%s" % [team.get("short", "T%d" % index), p.stats.id]
-		p.team = index
-		p.attack_dir = attack
-		var home: Array = pe.get("home", [0, 0])
-		p.home_position = Vector3(float(home[0]), 0.0, float(home[1]))
-		p.role = str(pe.get("role", brain.formation.role(slot) if brain != null else p.stats.position))
-		p.is_keeper = p.role == "GK"
-		p.match_ctx = self
-		p.ball = ball
-		p.direction_steps = direction_steps
-		add_child(p)
-		p.set_colors(primary, secondary)
-		PlayerModel.attach(p, p.stats.appearance, gk_kit if p.is_keeper else kit, p.stats.number)
-		p.kicked.connect(_on_kicked)
-		p.ai = PlayerAI.new()
-		p.ai.rng.seed = rng.randi()
-		if brain != null:
-			brain.players.append(p)
-			p.home_position = brain.kickoff_position(p)
+		var p := _create_player(index, str(pe.get("id", "")), slot, str(pe.get("role", "")))
 		var control := str(pe.get("control", "ai"))
 		if control == "human" and allow_human and human == null:
 			p.input_source = HumanInput.new()
@@ -142,17 +160,187 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 		elif control != "none":
 			p.input_source = p.ai
 		p.set_human(p == human)
-		players.append(p)
+		var home: Array = pe.get("home", [])
+		if brain == null and home.size() == 2:
+			p.home_position = Vector3(float(home[0]), 0.0, float(home[1]))
+
+
+## Builds a player of team `index` for formation `slot` (also used for subs).
+func _create_player(index: int, player_id: String, slot: int, role_override := "") -> PlayerController:
+	var tk: Dictionary = _team_kits[index]
+	var brain := brain_for(index)
+	var p := (load(PLAYER_SCENE_PATH) as PackedScene).instantiate() as PlayerController
+	p.stats = DataLoader.load_player(player_id)
+	p.name = "%s_%s" % [tk.short, p.stats.id]
+	p.team = index
+	p.attack_dir = float(tk.attack)
+	if brain != null:
+		p.attack_dir = brain.attack_dir
+	p.role = role_override if role_override != "" else (brain.formation.role(slot) if brain != null else p.stats.position)
+	p.is_keeper = p.role == "GK"
+	p.match_ctx = self
+	p.ball = ball
+	p.direction_steps = direction_steps
+	add_child(p)
+	p.set_colors(tk.primary, tk.secondary)
+	PlayerModel.attach(p, p.stats.appearance, tk.gk_kit if p.is_keeper else tk.kit, p.stats.number)
+	p.kicked.connect(_on_kicked)
+	p.ai = PlayerAI.new()
+	p.ai.rng.seed = rng.randi()
+	if brain != null:
+		brain.add_player(p, slot)
+		p.home_position = brain.kickoff_position(p)
+	players.append(p)
+	return p
+
+
+# --- substitutions ----------------------------------------------------------------
+
+## Queue a change; it happens at the next stoppage (like the real thing).
+func request_substitution(out: PlayerController, in_id: String) -> bool:
+	var team := out.team
+	if subs_used[team] + _queued_count(team) >= max_substitutions or not (in_id in bench[team]) \
+			or not (out in players):
+		return false
+	for q: Dictionary in queued_subs:
+		if q.out == out or q.in_id == in_id:
+			return false
+	queued_subs.append({"out": out, "in_id": in_id})
+	return true
+
+
+func _queued_count(team: int) -> int:
+	var n := 0
+	for q: Dictionary in queued_subs:
+		if (q.out as PlayerController).team == team:
+			n += 1
+	return n
+
+
+func substitute(out: PlayerController, in_id: String) -> PlayerController:
+	var team := out.team
+	var brain := brain_for(team)
+	if brain == null or not (out in players) or subs_used[team] >= max_substitutions:
+		return null
+	var slot := brain.slot_of(out)
+	var pos := out.global_position
+	var face := out.facing
+	var was_human := out == human
+	_remove_from_play(out)
+	bench[team].erase(in_id)
+	var p := _create_player(team, in_id, slot)
+	p.teleport(pos, face)
+	p.frozen = phase != Phase.PLAYING
+	if was_human:
+		human = p
+		p.input_source = out.input_source
+		p.set_human(true)
+	else:
+		p.input_source = p.ai
+	subs_used[team] += 1
+	stats["subs"] = int(stats.get("subs", 0)) + 1
+	hud.flash("CAMBIO: SALE %s · ENTRA %s" % [out.stats.name.to_upper(), p.stats.name.to_upper()], 2.0, false)
+	return p
+
+
+## At every stoppage: queued changes, then the AI coach of computer teams.
+func _apply_substitutions() -> void:
+	for q: Dictionary in queued_subs.duplicate():
+		substitute(q.out, q.in_id)
+	queued_subs.clear()
+	for team in 2:
+		if human != null and human.team == team:
+			continue
+		_ai_coach(team)
+
+
+## The computer's bench: injured players first, then the most tired after
+## the hour mark. One change per stoppage, like-for-like position.
+func _ai_coach(team: int) -> void:
+	if subs_used[team] >= max_substitutions or bench[team].is_empty():
+		return
+	var out: PlayerController = null
+	for p in players:
+		if p.team == team and p.injured:
+			out = p
+			break
+	if out == null and clock > 55.0:
+		for p in players:
+			if p.team == team and not p.is_keeper and p.stamina < 0.35 and (out == null or p.stamina < out.stamina):
+				out = p
+	if out == null:
+		return
+	var best_id := ""
+	for id: String in bench[team]:
+		var cand := DataLoader.load_player(id)
+		var keeper_ok := (cand.position == "GK") == out.is_keeper
+		if keeper_ok and (best_id == "" or _same_line(cand.position, out.role)):
+			best_id = id
+			if _same_line(cand.position, out.role):
+				break
+	if best_id != "":
+		substitute(out, best_id)
+
+
+static func _same_line(a: String, b: String) -> bool:
+	var lines := [["GK"], ["CB", "LB", "RB", "LWB", "RWB"], ["DMF", "CMF", "AMF", "LMF", "RMF"], ["CF", "WG", "SS"]]
+	for line: Array in lines:
+		if a in line and b in line:
+			return true
+	return a == b
+
+
+func _remove_from_play(p: PlayerController) -> void:
+	players.erase(p)
+	referee.players.erase(p)
+	var brain := brain_for(p.team)
+	if brain != null:
+		brain.remove_player(p)
+	if ball.owner_player == p:
+		ball.owner_player = null
+	p.visible = false
+	p.process_mode = Node.PROCESS_MODE_DISABLED
+	p.collision_layer = 0
+	p.collision_mask = 0
+	p.global_position = Vector3(0, -50, 0)
+
+
+func _spawn_official() -> void:
+	official = (load(PLAYER_SCENE_PATH) as PackedScene).instantiate() as PlayerController
+	official.stats = DataLoader.load_player("arbitro")
+	official.name = "Arbitro"
+	official.team = 2
+	official.role = "REF"
+	official.match_ctx = self
+	official.ball = ball
+	official.direction_steps = direction_steps
+	add_child(official)
+	# Ghost to physics: nobody bumps into the referee.
+	official.collision_layer = 0
+	official.collision_mask = 1
+	official.set_colors(Color(0.08, 0.08, 0.08), Color(0.08, 0.08, 0.08))
+	var kit: Variant = DataLoader.load_json("kits/referee.json")
+	PlayerModel.attach(official, "referee", kit if kit is Dictionary else {}, 0)
+	official.input_source = RefereeAI.new()
+	official.teleport(Vector3(0, 0, 14), Vector3.RIGHT)
 
 
 func _physics_process(delta: float) -> void:
+	if phase == Phase.FINISHED:
+		return
 	if phase == Phase.STOPPED:
 		_stop_timer -= delta
 		if _stop_timer <= 0.0:
 			phase = Phase.PLAYING
 			_restart.call()
 		return
-	clock += delta
+	var game_minutes := delta * 45.0 / half_seconds
+	clock += game_minutes
+	for p in players:
+		p.update_stamina(game_minutes)
+	if clock >= 45.0 * half:
+		_end_of_half()
+		return
 	for brain: TeamBrain in brains:
 		if brain != null:
 			brain.update(delta)
@@ -160,6 +348,7 @@ func _physics_process(delta: float) -> void:
 	if ball.owner_player != null:
 		pass_receiver = null
 	_update_set_piece(delta)
+	_update_advantage(delta)
 	var flag := offside.update()
 	if not flag.is_empty():
 		var offender: PlayerController = flag.player
@@ -178,9 +367,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed(&"camera_zoom"):
 		camera.cycle_zoom()
 	elif event.is_action_pressed(&"reset_match"):
-		score = [0, 0]
-		clock = 0.0
-		kickoff(0)
+		restart_match()
 
 
 ## In-match strategy change for the human's team (T), like WE's quick tactics.
@@ -201,6 +388,45 @@ func _tactics_id(brain: TeamBrain) -> String:
 		if TeamTactics.load_id(id).name == brain.tactics.name:
 			return id
 	return ""
+
+
+func restart_match() -> void:
+	score = [0, 0]
+	clock = 0.0
+	if half == 2:
+		_switch_sides()
+	half = 1
+	for p in players:
+		p.stamina = 1.0
+		p.injured = false
+		p.yellow_cards = 0
+	kickoff(0)
+
+
+func _end_of_half() -> void:
+	if half == 1:
+		half = 2
+		clock = 45.0
+		_stop("DESCANSO", 3.0, func() -> void:
+			_switch_sides()
+			kickoff(1 - _kicked_off_first))
+	else:
+		clock = 90.0
+		_stop("FINAL DEL PARTIDO  %d - %d" % [score[0], score[1]], 1.0, func() -> void:
+			phase = Phase.FINISHED
+			for p in players:
+				p.frozen = true
+			hud.flash("FINAL  %d - %d   ·   R para jugar otro" % [score[0], score[1]], 3600.0, true))
+
+
+## Half time: teams change ends.
+func _switch_sides() -> void:
+	for p in players:
+		p.attack_dir = -p.attack_dir
+		p.home_position.x = -p.home_position.x
+	for brain: TeamBrain in brains:
+		if brain != null:
+			brain.attack_dir = -brain.attack_dir
 
 
 func set_piece_active() -> bool:
@@ -273,11 +499,71 @@ func _goal(team: int) -> void:
 	offside.reset()
 
 
-func _on_foul(offender: PlayerController, victim: PlayerController) -> void:
+func _on_foul(offender: PlayerController, victim: PlayerController, slide: bool) -> void:
 	if phase != Phase.PLAYING:
 		return
+	var verdict := foul_judge.judge(offender, victim, slide)
+	stats["fouls"] = int(stats.get("fouls", 0)) + 1
+	last_foul = verdict.merged({"offender": offender, "victim": victim})
+	if verdict.injury:
+		victim.injured = true
 	var spot := DirectionResolver.flat(victim.global_position)
-	_stop("FALTA DE %s" % offender.stats.name.to_upper(), 1.6, _restart_at.bind(victim.team, spot, "TIRO LIBRE"))
+	if verdict.penalty:
+		_book(offender, verdict.card)
+		_stop("¡PENAL!", 2.0, _restart_at.bind(victim.team, _penalty_spot(victim.team), "PENAL"))
+		return
+	# Advantage: the fouled team still has (or is about to win) the ball.
+	var owner := ball.owner_player as PlayerController
+	if not verdict.dogso and owner != null and owner.team == victim.team and owner != victim:
+		_book(offender, verdict.card)
+		_advantage = {"team": victim.team, "spot": spot, "time": 0.0}
+		hud.flash("VENTAJA", 1.0, false)
+		return
+	_book(offender, verdict.card)
+	var msg := "FALTA DE %s" % offender.stats.name.to_upper()
+	if verdict.card != "":
+		msg += "  ·  TARJETA %s" % verdict.card
+	_stop(msg, 1.8, _restart_at.bind(victim.team, spot, "TIRO LIBRE"))
+
+
+## Plays on while the fouled team keeps the ball; if it is lost within 1.5 s
+## the referee goes back for the free kick.
+func _update_advantage(delta: float) -> void:
+	if _advantage.is_empty():
+		return
+	_advantage.time += delta
+	var owner := ball.owner_player as PlayerController
+	if owner != null and owner.team != _advantage.team:
+		var adv := _advantage
+		_advantage = {}
+		_stop("FALTA", 1.5, _restart_at.bind(int(adv.team), adv.spot as Vector3, "TIRO LIBRE"))
+	elif _advantage.time > 1.5:
+		_advantage = {}
+
+
+func _book(p: PlayerController, card: String) -> void:
+	if card == "":
+		return
+	stats["cards"] = int(stats.get("cards", 0)) + 1
+	hud.show_card(card, p)
+	if card == FoulJudge.YELLOW:
+		p.yellow_cards += 1
+	else:
+		send_off(p)
+
+
+## Red card: the player leaves; his team plays one short.
+func send_off(p: PlayerController) -> void:
+	if p == human:
+		switch_to_nearest()
+		if p == human:  # nobody to switch to
+			human = null
+	_remove_from_play(p)
+	sent_off.append(p)
+
+
+func _penalty_spot(attacking_team: int) -> Vector3:
+	return Vector3(_attack_dir_of(attacking_team) * (PitchBuilder.HALF_LENGTH - 11.0), 0, 0)
 
 
 func _stop(message: String, seconds: float, restart: Callable) -> void:
@@ -287,10 +573,13 @@ func _stop(message: String, seconds: float, restart: Callable) -> void:
 	for p in players:
 		p.frozen = true
 	hud.flash(message, seconds, true)
+	_apply_substitutions()
 
 
 func kickoff(team: int) -> void:
 	phase = Phase.PLAYING
+	if clock < 0.01:
+		_kicked_off_first = team
 	ball.place(Vector3(0, Ball.RADIUS, 0))
 	_end_set_piece()
 	offside.reset()
@@ -326,11 +615,15 @@ func _restart_at(team: int, spot: Vector3, kind: String) -> void:
 				var push := away.normalized() if away.length() > 0.1 else into_pitch
 				p.teleport(spot + push * keep, -push)
 	var face := into_pitch
-	if kind == "TIRO LIBRE" or kind == "CÓRNER":
+	if kind == "TIRO LIBRE" or kind == "CÓRNER" or kind == "PENAL":
 		face = DirectionResolver.flat(goal_center(_attack_dir_of(team)) - spot).normalized()
 	if taker != null:
 		taker.teleport(spot - face * 0.55, face)
 		_give_control(taker)
+		if kind == "LATERAL":
+			# Throw-in: the taker picks the ball up.
+			taker.teleport(Vector3(spot.x, 0, spot.z), face)
+			ball.hold(taker)
 	offside.reset()
 	set_piece = {"kind": kind, "team": team, "taker": taker, "time": 0.0}
 	SetPieces.arrange(self, kind, team, spot, taker)
@@ -360,6 +653,12 @@ func _kickoff_taker(team: int) -> PlayerController:
 ## Goal kicks go to the keeper; everything else to the nearest outfield player.
 func _restart_taker(team: int, pos: Vector3, kind: String) -> PlayerController:
 	var best: PlayerController = null
+	if kind == "PENAL":
+		# The best finisher takes it.
+		for p in players:
+			if p.team == team and not p.is_keeper and (best == null or p.stats.shooting > best.stats.shooting):
+				best = p
+		return best
 	for p in players:
 		if p.team != team:
 			continue
