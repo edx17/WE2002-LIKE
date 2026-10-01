@@ -1,0 +1,110 @@
+{
+  "name": "Etapa 3 — 11 vs 11",
+  "direction_steps": 8,
+  "teams": [
+    {
+      "id": "team_a",
+      "attack_dir": 1,
+      "formation": "4-4-2",
+      "tactics": "equilibrado",
+      "players": [
+        {
+          "id": "cap_01",
+          "control": "ai"
+        },
+        {
+          "id": "cap_02",
+          "control": "ai"
+        },
+        {
+          "id": "cap_03",
+          "control": "ai"
+        },
+        {
+          "id": "cap_04",
+          "control": "ai"
+        },
+        {
+          "id": "cap_05",
+          "control": "ai"
+        },
+        {
+          "id": "cap_06",
+          "control": "ai"
+        },
+        {
+          "id": "cap_07",
+          "control": "ai"
+        },
+        {
+          "id": "cap_08",
+          "control": "ai"
+        },
+        {
+          "id": "cap_09",
+          "control": "ai"
+        },
+        {
+          "id": "cap_10",
+          "control": "human"
+        },
+        {
+          "id": "cap_11",
+          "control": "ai"
+        }
+      ]
+    },
+    {
+      "id": "team_b",
+      "attack_dir": -1,
+      "formation": "4-3-3",
+      "tactics": "presion_alta",
+      "players": [
+        {
+          "id": "dvs_01",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_02",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_03",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_04",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_05",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_06",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_07",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_08",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_09",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_10",
+          "control": "ai"
+        },
+        {
+          "id": "dvs_11",
+          "control": "ai"
+        }
+      ]
+    }
+  ]
+}

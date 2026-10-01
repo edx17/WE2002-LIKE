@@ -44,6 +44,9 @@ func _run() -> void:
 	await _test_ai_match_soak()
 	await _test_5v5_soak()
 	await _test_player_switch()
+	await _test_offside()
+	await _test_set_pieces()
+	await _test_11v11_soak()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -438,6 +441,127 @@ func _test_player_switch() -> void:
 	await _frames(40)  # windup + contact
 	check(m.human == mate, "al pasar, el control pasa al receptor (%s → %s, controla %s, patada %d)" % [
 		passer.name, mate.name, m.human.name, passer.last_kick_type])
+	m.queue_free()
+	await _frames(1)
+
+
+## Freezes everyone and lays out a simple attack: passer with the ball at
+## x=10, defenders on a line at x=20, receiver at `receiver_x`.
+func _offside_scenario(receiver_x: float) -> Dictionary:
+	var m := _new_match("stage3_11v11")
+	await _frames(2)
+	for p in m.players:
+		p.input_source = null
+	var attackers := m.players.filter(func(p: PlayerController) -> bool: return p.team == 0 and not p.is_keeper)
+	var defenders := m.players.filter(func(p: PlayerController) -> bool: return p.team == 1 and not p.is_keeper)
+	for i in defenders.size():
+		(defenders[i] as PlayerController).teleport(Vector3(20, 0, -30 + i * 6.0), Vector3.LEFT)
+	for p in m.players:
+		if p.is_keeper:
+			p.teleport(Vector3(50.0 * p.attack_dir * -1.0, 0, 0), Vector3.RIGHT * p.attack_dir)
+	for i in attackers.size():
+		(attackers[i] as PlayerController).teleport(Vector3(-20, 0, -30 + i * 6.0), Vector3.RIGHT)
+	var passer: PlayerController = attackers[0]
+	var receiver: PlayerController = attackers[1]
+	passer.teleport(Vector3(10, 0, 3), Vector3.RIGHT)
+	receiver.teleport(Vector3(receiver_x, 0, 3), Vector3.LEFT)
+	m.ball.place(Vector3(10.55, Ball.RADIUS, 3))
+	var input := ScriptedInput.new()
+	passer.input_source = input
+	await _frames(20)
+	m.offside.reset()
+	input.move = Vector2.RIGHT
+	input.charge = 0.5
+	input.release = PlayerIntent.Action.PASS
+	var restarts: Array = []
+	m.restarted.connect(func(k: String) -> void: restarts.append([k, m.set_piece.get("team", -1)]))
+	var stopped := false
+	for i in 120 * 5:
+		await physics_frame
+		stopped = stopped or m.phase == MatchController.Phase.STOPPED
+		if receiver.has_ball() or not restarts.is_empty():
+			break
+	if stopped:
+		await _frames(120 * 2)  # the free kick is taken after the pause
+	return {"m": m, "receiver": receiver, "restarts": restarts, "stopped": stopped}
+
+
+func _test_offside() -> void:
+	print("Fuera de juego")
+	var r := await _offside_scenario(30.0)
+	var restarts: Array = r.restarts
+	check(r.stopped and not restarts.is_empty() and restarts[0][0] == "TIRO LIBRE" and restarts[0][1] == 1,
+		"pase a un jugador adelantado: fuera de juego y tiro libre para el rival")
+	(r.m as MatchController).queue_free()
+	await _frames(1)
+	r = await _offside_scenario(15.0)
+	check(not r.stopped and (r.receiver as PlayerController).has_ball(), "habilitado detrás de la línea: sigue el juego")
+	(r.m as MatchController).queue_free()
+	await _frames(1)
+
+
+func _test_set_pieces() -> void:
+	print("Pelota parada")
+	var m := _new_match("stage3_11v11")
+	await _frames(2)
+	for p in m.players:
+		p.input_source = null
+	m._restart_at(0, Vector3(52.0, 0, 33.5), "CÓRNER")
+	var in_box := 0
+	var marked := 0
+	for p in m.players:
+		if p.team == 0 and m.in_penalty_area(p.global_position, 1.0):
+			in_box += 1
+			for d in m.opponents_of(p):
+				if not d.is_keeper and d.global_position.distance_to(p.global_position) < 2.0:
+					marked += 1
+					break
+	check(in_box >= 4, "córner: %d atacantes en el área" % in_box)
+	check(marked >= 4, "córner: %d de ellos marcados" % marked)
+	var fk := Vector3(30.5, 0, 3.0)  # ~22 m from goal: four-man wall
+	m._restart_at(0, fk, "TIRO LIBRE")
+	var wall := 0
+	for p in m.players:
+		if p.team == 1 and not p.is_keeper:
+			var d := p.global_position.distance_to(fk)
+			if absf(d - SetPieces.WALL_DISTANCE) < 0.6:
+				wall += 1
+	check(wall >= 4, "tiro libre a 22 m: barrera de %d a 9.15 m" % wall)
+	var too_close := 0
+	for p in m.players:
+		if p.team == 1 and p.global_position.distance_to(fk) < SetPieces.WALL_DISTANCE - 0.3:
+			too_close += 1
+	check(too_close == 0, "ningún rival a menos de 9.15 m")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_11v11_soak() -> void:
+	print("Simulación: 11v11 IA contra IA, 90 s")
+	var m := _new_match("stage3_11v11")
+	var swarm := 0.0
+	var spread := 0.0
+	var samples := 0
+	var frames := 120 * 90
+	for i in frames:
+		await physics_frame
+		var b := m.ball.global_position
+		for p in m.players:
+			if not p.is_keeper and p.global_position.distance_to(b) < 4.0:
+				swarm += 1.0
+		var brain := m.brain_for(1)
+		if brain.shape < 0.3:
+			var xs: Array[float] = []
+			for p in brain.players:
+				if brain.role_of(p) in ["CB", "LB", "RB"] and not p.is_grounded_state():
+					xs.append(p.global_position.x)
+			xs.sort()
+			spread += xs[xs.size() - 1] - xs[0]
+			samples += 1
+	print("       goles %d-%d, %s" % [m.score[0], m.score[1], m.stats])
+	check(swarm / frames < 3.5, "11v11 sin enjambre: %.1f jugadores cerca de la pelota" % (swarm / frames))
+	check(samples > 0 and spread / samples < 10.0, "línea de 4 en bloque: %.1f m entre el más adelantado y el más atrasado" % (spread / maxf(samples, 1)))
+	check(m.stats.passes_completed >= 20, "11v11: %d pases completados de %d" % [m.stats.passes_completed, m.stats.passes])
 	m.queue_free()
 	await _frames(1)
 

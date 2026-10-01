@@ -71,7 +71,14 @@ func _decide(p: PlayerController) -> void:
 		return
 	var a := brain.assignment(p)
 	var target: Vector3 = a.target
-	match int(a.mode):
+	var a_mode := int(a.mode)
+	if p.match_ctx.set_piece_active() and a_mode == TeamBrain.Mode.PRESS:
+		# Dead ball: keep the distance until it's played.
+		a_mode = TeamBrain.Mode.POSITION
+		var keep := SetPieces.min_distance(str(p.match_ctx.set_piece.kind)) + 0.5
+		var from_ball := DirectionResolver.flat(p.global_position - p.ball.global_position)
+		target = p.ball.global_position + (from_ball.normalized() if from_ball.length() > 0.1 else Vector3.RIGHT) * keep
+	match a_mode:
 		TeamBrain.Mode.PRESS:
 			if carrier != null and carrier.team != p.team:
 				_defend(p, carrier)
@@ -126,6 +133,9 @@ func _go(p: PlayerController, target: Vector3, tolerance: float, sprint_beyond: 
 func _on_ball(p: PlayerController) -> void:
 	mode = Mode.ATTACK
 	var m := p.match_ctx
+	if m.set_piece_active() and m.set_piece.taker == p:
+		_take_set_piece(p)
+		return
 	var goal := m.goal_center(p.attack_dir)
 	var to_goal := DirectionResolver.flat(goal - p.global_position)
 	var dist := to_goal.length()
@@ -170,6 +180,55 @@ func _shoot(p: PlayerController, dist: float) -> void:
 	_sprint = false
 
 
+## Dead balls: corners are crossed into the box, close free kicks are shot
+## at goal, everything else is passed. Never dribbled.
+func _take_set_piece(p: PlayerController) -> void:
+	var m := p.match_ctx
+	_move = Vector2.ZERO
+	_sprint = false
+	if float(m.set_piece.time) < 0.9:
+		return  # let everyone take position
+	var kind := str(m.set_piece.kind)
+	var dist := p.global_position.distance_to(m.goal_center(p.attack_dir))
+	if kind == "TIRO LIBRE" and dist < 27.0 and rng.randf() < 0.65:
+		_shoot(p, dist)
+		return
+	if kind == "CÓRNER":
+		var target := _best_header_target(p)
+		if target != null:
+			var aim := DirectionResolver.flat(target.global_position - p.global_position)
+			_move = DirectionResolver.to_stick(aim).normalized()
+			_release = PlayerIntent.Action.LOB
+			_release_charge = 0.6
+			return
+	var best := _best_pass(p)
+	if not best.is_empty():
+		var aim: Vector3 = best.target - p.global_position
+		_move = DirectionResolver.to_stick(DirectionResolver.flat(aim)).normalized()
+		_release = best.action
+		_release_charge = best.charge
+	else:
+		_move = Vector2(p.attack_dir, 0.0)
+		_release = PlayerIntent.Action.LOB
+		_release_charge = 0.7
+
+
+func _best_header_target(p: PlayerController) -> PlayerController:
+	var best: PlayerController = null
+	var best_score := -INF
+	for mate in p.match_ctx.teammates_of(p):
+		if not p.match_ctx.in_penalty_area(mate.global_position, p.attack_dir):
+			continue
+		var space := 6.0
+		for o in p.match_ctx.opponents_of(p):
+			space = minf(space, o.global_position.distance_to(mate.global_position))
+		var score := mate.stats.n(&"heading") * 2.0 + space * 0.3 + rng.randf() * 0.5
+		if score > best_score:
+			best_score = score
+			best = mate
+	return best
+
+
 ## Scores every team-mate as a pass: safe lane, space around the receiver,
 ## ground gained. Returns {} when nobody is worth it.
 func _best_pass(p: PlayerController) -> Dictionary:
@@ -179,6 +238,8 @@ func _best_pass(p: PlayerController) -> Dictionary:
 	for mate in m.teammates_of(p):
 		if mate.is_keeper or not mate.can_play_ball():
 			continue
+		if m.offside != null and m.offside.is_offside_position(mate):
+			continue  # don't play a team-mate offside
 		var target := mate.global_position + DirectionResolver.flat(mate.velocity) * 0.4
 		var d := p.global_position.distance_to(target)
 		if d < 5.0 or d > 42.0:

@@ -605,7 +605,7 @@ def main(argv):
     ids = [a for a in argv if not a.startswith("--")]
     if "--all" in argv or not ids:
         ids = sorted(f[:-5] for f in os.listdir(os.path.join(DATA, "appearance"))
-                     if f.startswith("player_") and f.endswith(".json"))
+                     if f.endswith(".json") and f != "components.json")
     for rid in ids:
         generate(rid)
 

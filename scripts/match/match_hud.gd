@@ -20,7 +20,7 @@ const HELP := """MOVER  WASD / flechas / stick      SPRINT  Shift / Espacio / RB
 PASE  J / A      REMATE  K / X      FILTRADO  I / Y      GLOBO  L / B      CAMBIAR JUGADOR  Q / LB
 Mantener = cargar potencia · soltar = patear · sin pelota = acción de primera
 DEFENDER: mantener PASE = presionar · tocar PASE = quite · REMATE = barrida
-F2 8/16 direcciones · C zoom cámara · F3 debug · R reiniciar · F1 ayuda"""
+T táctica (equilibrado / presión alta / repliegue) · F2 8/16 direcciones · C zoom · F3 debug · R reiniciar · F1 ayuda"""
 
 
 func setup(m: MatchController) -> void:

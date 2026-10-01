@@ -19,6 +19,7 @@ static func ensure_actions() -> void:
 	_add(&"lob", [KEY_L], [JOY_BUTTON_B])
 	_add(&"sprint", [KEY_SHIFT, KEY_SPACE], [JOY_BUTTON_RIGHT_SHOULDER])
 	_add(&"switch_player", [KEY_Q], [JOY_BUTTON_LEFT_SHOULDER])
+	_add(&"cycle_tactics", [KEY_T], [JOY_BUTTON_RIGHT_STICK])
 	_add(&"toggle_directions", [KEY_F2], [JOY_BUTTON_LEFT_STICK])
 	_add(&"camera_zoom", [KEY_C], [JOY_BUTTON_BACK])
 	_add(&"toggle_debug", [KEY_F3], [])

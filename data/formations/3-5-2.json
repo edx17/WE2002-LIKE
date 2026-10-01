@@ -1,0 +1,127 @@
+{
+  "_doc": "Posiciones por puesto en el espacio del equipo: x = progreso desde la propia línea de fondo (0) a la rival (1); z = ancho, -1..1 del medio ancho. 'def' sin pelota, 'att' con pelota.",
+  "name": "3-5-2",
+  "slots": [
+    {
+      "role": "GK",
+      "def": [
+        0.015,
+        0
+      ],
+      "att": [
+        0.04,
+        0
+      ]
+    },
+    {
+      "role": "CB",
+      "def": [
+        0.15,
+        -0.35
+      ],
+      "att": [
+        0.33,
+        -0.42
+      ]
+    },
+    {
+      "role": "CB",
+      "def": [
+        0.14,
+        0
+      ],
+      "att": [
+        0.3,
+        0
+      ]
+    },
+    {
+      "role": "CB",
+      "def": [
+        0.15,
+        0.35
+      ],
+      "att": [
+        0.33,
+        0.42
+      ]
+    },
+    {
+      "role": "LWB",
+      "def": [
+        0.25,
+        -0.78
+      ],
+      "att": [
+        0.6,
+        -0.85
+      ]
+    },
+    {
+      "role": "DMF",
+      "def": [
+        0.25,
+        0
+      ],
+      "att": [
+        0.43,
+        0
+      ]
+    },
+    {
+      "role": "CMF",
+      "def": [
+        0.32,
+        -0.28
+      ],
+      "att": [
+        0.56,
+        -0.28
+      ]
+    },
+    {
+      "role": "CMF",
+      "def": [
+        0.32,
+        0.28
+      ],
+      "att": [
+        0.56,
+        0.28
+      ]
+    },
+    {
+      "role": "RWB",
+      "def": [
+        0.25,
+        0.78
+      ],
+      "att": [
+        0.6,
+        0.85
+      ]
+    },
+    {
+      "role": "CF",
+      "def": [
+        0.43,
+        -0.13
+      ],
+      "att": [
+        0.77,
+        -0.15
+      ]
+    },
+    {
+      "role": "CF",
+      "def": [
+        0.43,
+        0.13
+      ],
+      "att": [
+        0.75,
+        0.15
+      ]
+    }
+  ]
+}

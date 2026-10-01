@@ -1,0 +1,9 @@
+{
+  "_doc": "Tácticas de equipo, todas 0..1. pressing: cuán arriba y con cuántos presiona. defensive_line: altura de la línea de fondo. width: amplitud con pelota. compactness: cuánto se desplaza el bloque con la pelota. offside_trap: la línea sube en bloque para dejar en offside.",
+  "name": "Equilibrado",
+  "pressing": 0.5,
+  "defensive_line": 0.5,
+  "width": 0.6,
+  "compactness": 0.6,
+  "offside_trap": true
+}

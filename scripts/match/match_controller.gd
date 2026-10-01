@@ -18,7 +18,7 @@ signal restarted(kind: String)
 ##   godot -- --match=stage0_solo
 ##   godot -- --attract          (every player driven by AI)
 ##   godot -- --zoom=0           (camera zoom level: 0 close, 1 normal, 2 wide)
-@export var match_id := "stage2_5v5"
+@export var match_id := "stage3_11v11"
 ## Disable to drive every player from AI/scripts (tests, attract mode).
 @export var allow_human := true
 
@@ -35,6 +35,9 @@ var direction_steps := 8
 var last_kick_text := ""
 ## One TeamBrain per team when the match setup gives formations (5v5+).
 var brains: Array = [null, null]
+var offside: OffsideRule
+## Dead ball being taken: {kind, team, taker, time}; empty in open play.
+var set_piece := {}
 
 var _last_receiver: PlayerController = null
 ## Running match statistics (HUD, tests, tuning).
@@ -69,6 +72,7 @@ func _ready() -> void:
 	PitchBuilder.build(self, look)
 	ball = (load(BALL_SCENE_PATH) as PackedScene).instantiate() as Ball
 	add_child(ball)
+	offside = OffsideRule.new(self)
 	referee = PossessionReferee.new(ball)
 	referee.rng = rng
 	referee.event.connect(func(text: String) -> void: hud.flash(text, 0.8, false))
@@ -104,6 +108,7 @@ func _spawn_team(index: int, entry: Dictionary) -> void:
 	if formation_id != "":
 		brain = TeamBrain.new(self, index, Formation.load_id(formation_id))
 		brain.attack_dir = attack
+		brain.tactics = TeamTactics.load_id(str(entry.get("tactics", "")))
 		brains[index] = brain
 	var player_scene := load(PLAYER_SCENE_PATH) as PackedScene
 	var entries: Array = entry.get("players", [])
@@ -154,6 +159,12 @@ func _physics_process(delta: float) -> void:
 	referee.update(delta)
 	if ball.owner_player != null:
 		pass_receiver = null
+	_update_set_piece(delta)
+	var flag := offside.update()
+	if not flag.is_empty():
+		var offender: PlayerController = flag.player
+		_stop("FUERA DE JUEGO", 1.4, _restart_at.bind(1 - offender.team, DirectionResolver.flat(flag.spot), "TIRO LIBRE"))
+		return
 	_check_ball_out()
 
 
@@ -162,12 +173,54 @@ func _unhandled_input(event: InputEvent) -> void:
 		set_direction_steps(16 if direction_steps == 8 else 8)
 	elif event.is_action_pressed(&"switch_player"):
 		switch_to_nearest()
+	elif event.is_action_pressed(&"cycle_tactics"):
+		cycle_tactics()
 	elif event.is_action_pressed(&"camera_zoom"):
 		camera.cycle_zoom()
 	elif event.is_action_pressed(&"reset_match"):
 		score = [0, 0]
 		clock = 0.0
 		kickoff(0)
+
+
+## In-match strategy change for the human's team (T), like WE's quick tactics.
+const TACTICS_CYCLE := ["equilibrado", "presion_alta", "repliegue"]
+
+func cycle_tactics() -> void:
+	if human == null or brain_for(human.team) == null:
+		return
+	var brain := brain_for(human.team)
+	var i := TACTICS_CYCLE.find(_tactics_id(brain))
+	var next_id: String = TACTICS_CYCLE[(i + 1) % TACTICS_CYCLE.size()]
+	brain.tactics = TeamTactics.load_id(next_id)
+	hud.flash("TÁCTICA: %s" % brain.tactics.name.to_upper(), 1.2, false)
+
+
+func _tactics_id(brain: TeamBrain) -> String:
+	for id: String in TACTICS_CYCLE:
+		if TeamTactics.load_id(id).name == brain.tactics.name:
+			return id
+	return ""
+
+
+func set_piece_active() -> bool:
+	return not set_piece.is_empty()
+
+
+## Set-piece positions are held until the taker plays the ball (or 6 s pass).
+func _update_set_piece(delta: float) -> void:
+	if set_piece.is_empty():
+		return
+	set_piece.time += delta
+	if set_piece.time > 6.0:
+		_end_set_piece()
+
+
+func _end_set_piece() -> void:
+	set_piece = {}
+	for brain: TeamBrain in brains:
+		if brain != null:
+			brain.set_piece_targets.clear()
 
 
 func set_direction_steps(steps: int) -> void:
@@ -217,6 +270,7 @@ func _goal(team: int) -> void:
 		if p.team == team:
 			p.celebrate()
 	_stop("¡GOOOL!", 2.5, kickoff.bind(1 - team))
+	offside.reset()
 
 
 func _on_foul(offender: PlayerController, victim: PlayerController) -> void:
@@ -238,6 +292,8 @@ func _stop(message: String, seconds: float, restart: Callable) -> void:
 func kickoff(team: int) -> void:
 	phase = Phase.PLAYING
 	ball.place(Vector3(0, Ball.RADIUS, 0))
+	_end_set_piece()
+	offside.reset()
 	var taker := _kickoff_taker(team)
 	for p in players:
 		p.frozen = false
@@ -262,16 +318,30 @@ func _restart_at(team: int, spot: Vector3, kind: String) -> void:
 		p.frozen = false
 		if p.is_grounded_state() or p.state == PlayerController.State.CELEBRATE:
 			p.teleport(p.global_position, p.facing)
-		# Opponents back off 5 m.
+		# Opponents back off (9.15 m, 3 m for throw-ins).
+		var keep := SetPieces.min_distance(kind)
 		if p.team != team:
 			var away := DirectionResolver.flat(p.global_position - spot)
-			if away.length() < 5.0:
+			if away.length() < keep:
 				var push := away.normalized() if away.length() > 0.1 else into_pitch
-				p.teleport(spot + push * 5.0, -push)
+				p.teleport(spot + push * keep, -push)
+	var face := into_pitch
+	if kind == "TIRO LIBRE" or kind == "CÓRNER":
+		face = DirectionResolver.flat(goal_center(_attack_dir_of(team)) - spot).normalized()
 	if taker != null:
-		taker.teleport(spot - into_pitch * 0.55, into_pitch)
+		taker.teleport(spot - face * 0.55, face)
 		_give_control(taker)
+	offside.reset()
+	set_piece = {"kind": kind, "team": team, "taker": taker, "time": 0.0}
+	SetPieces.arrange(self, kind, team, spot, taker)
 	restarted.emit(kind)
+
+
+func _attack_dir_of(team: int) -> float:
+	for p in players:
+		if p.team == team:
+			return p.attack_dir
+	return 1.0
 
 
 ## Kick-off: the most advanced outfield player (the forward) takes it.
@@ -444,6 +514,15 @@ func pass_target(p: PlayerController, type: int, dir: Vector3, power: float) -> 
 
 func _on_kicked(p: PlayerController, type: int, result: KickSolver.KickResult) -> void:
 	last_kick_text = "%s: %s" % [p.stats.name, result.describe(type)]
+	# Offside: throw-ins, corners and goal kicks are exempt.
+	var exempt: bool = not set_piece.is_empty() and set_piece.taker == p \
+		and set_piece.kind in ["LATERAL", "CÓRNER", "SAQUE DE ARCO"]
+	if exempt:
+		offside.reset()
+	else:
+		offside.on_kick(p)
+	if not set_piece.is_empty():
+		_end_set_piece()
 	if type == KickSolver.KickType.SHOT:
 		stats.shots += 1
 	elif type != KickSolver.KickType.HEADER:

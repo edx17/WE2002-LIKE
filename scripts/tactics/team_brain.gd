@@ -1,26 +1,38 @@
 class_name TeamBrain
 extends RefCounted
 ## The team's collective decisions, refreshed a few times per second:
-## where the block sits (shape between defending and attacking, sliding
-## with the ball) and who does what. Exactly ONE player presses the ball;
-## one covers behind him; the rest mark or hold their slot. With the ball,
-## one player offers short support and the most advanced one runs in behind.
+## where the block sits (shape between defending and attacking, sliding with
+## the ball, set by the tactics), and who does what:
+##
+##   without the ball  one presser (two with a high press, in their half), one
+##                     cover behind, a flat back line that moves together
+##                     (offside trap), the rest mark goal-side or hold shape
+##   with the ball     the nearest team-mates offer support in open space,
+##                     forwards and wingers run on the last defender's
+##                     shoulder (onside until the pass), full-backs overlap
+##   set pieces        fixed positions handed out by SetPieces
 ##
 ## PlayerAI asks assignment(p) and only then decides how to move.
 
 enum Mode { POSITION, PRESS, COVER, MARK, SUPPORT, RUN, KEEPER }
 const MODE_NAMES := ["POSITION", "PRESS", "COVER", "MARK", "SUPPORT", "RUN", "KEEPER"]
 const THINK_EVERY := 0.15
-## How far the whole block shifts with the ball (team-space units).
-const BALL_SHIFT := 0.35
+const BACK_LINE := ["CB", "LB", "RB", "SW", "DF", "LWB", "RWB"]
+const FULL_BACKS := ["LB", "RB", "LWB", "RWB"]
+const RUNNERS := ["CF", "WG", "SS"]
 
 var team := 0
 var attack_dir := 1.0
 var formation: Formation
+var tactics := TeamTactics.new()
 var players: Array[PlayerController] = []  # slot order
 var match_ctx: MatchController
 var shape := 0.5  # 0 defending .. 1 attacking (smoothed)
 var in_possession := false
+## Progress (team space) of the back line, for tests and the HUD.
+var line_progress := 0.2
+## Fixed targets while a set piece is being taken (player -> Vector3).
+var set_piece_targets := {}
 
 var _assignments := {}
 var _timer := 0.0
@@ -36,11 +48,17 @@ func slot_of(p: PlayerController) -> int:
 	return players.find(p)
 
 
+func role_of(p: PlayerController) -> String:
+	return formation.role(slot_of(p))
+
+
 func is_keeper(p: PlayerController) -> bool:
-	return formation.role(slot_of(p)) == "GK"
+	return role_of(p) == "GK"
 
 
 func assignment(p: PlayerController) -> Dictionary:
+	if set_piece_targets.has(p):
+		return {"mode": Mode.POSITION, "target": set_piece_targets[p]}
 	return _assignments.get(p, {"mode": Mode.POSITION, "target": p.home_position})
 
 
@@ -48,6 +66,10 @@ func assignment(p: PlayerController) -> Dictionary:
 func kickoff_position(p: PlayerController) -> Vector3:
 	var pt := formation.point(slot_of(p), 0.0)
 	return Formation.to_world(minf(pt.x, 0.46), pt.y, attack_dir)
+
+
+func progress(pos: Vector3) -> float:
+	return Formation.progress_of(pos.x, attack_dir)
 
 
 func update(delta: float) -> void:
@@ -65,7 +87,7 @@ func update(delta: float) -> void:
 	_assignments.clear()
 
 	var ball_pos := ball.global_position
-	var ball_prog := Formation.progress_of(ball_pos.x, attack_dir)
+	var ball_prog := progress(ball_pos)
 	var outfield: Array[PlayerController] = []
 	for p in players:
 		if is_keeper(p):
@@ -74,44 +96,79 @@ func update(delta: float) -> void:
 			outfield.append(p)
 	for p in outfield:
 		_assignments[p] = {"mode": Mode.POSITION, "target": _slot_target(p, ball_prog, ball_pos)}
+	_hold_the_line(outfield, ball_prog)
 
 	if owner != null and owner.team == team:
 		_attacking(owner, outfield, ball_pos)
 	else:
-		_defending(owner, outfield, ball_pos)
+		_defending(owner, outfield, ball_pos, ball_prog)
 
 
 func _slot_target(p: PlayerController, ball_prog: float, ball_pos: Vector3) -> Vector3:
 	var pt := formation.point(slot_of(p), shape)
-	var prog := clampf(pt.x + (ball_prog - 0.5) * BALL_SHIFT, 0.05, 0.9)
-	var width := clampf(pt.y * lerpf(0.6, 0.9, shape) + ball_pos.z / PitchBuilder.HALF_WIDTH * 0.3, -0.92, 0.92)
+	var shift := lerpf(0.2, 0.45, tactics.compactness)
+	var line_bias := (tactics.defensive_line - 0.5) * 0.12 * (1.0 - shape)
+	var prog := clampf(pt.x + line_bias + (ball_prog - 0.5) * shift, 0.04, 0.9)
+	var spread := lerpf(0.55, lerpf(0.7, 1.0, tactics.width), shape)
+	var width := clampf(pt.y * spread + ball_pos.z / PitchBuilder.HALF_WIDTH * 0.3, -0.92, 0.92)
 	return Formation.to_world(prog, width, attack_dir)
 
 
-func _defending(owner: PlayerController, outfield: Array[PlayerController], ball_pos: Vector3) -> void:
-	# One presser (fastest to the ball), one cover behind him.
+## The back line moves as one: every defender shares the line's height.
+## Never deeper than needed, never behind the ball when it's in our half,
+## and (offside trap) it steps up when the ball goes backwards.
+func _hold_the_line(outfield: Array[PlayerController], ball_prog: float) -> void:
+	var line := INF
+	var count := 0
+	for p in outfield:
+		if role_of(p) in BACK_LINE and not (role_of(p) in FULL_BACKS and shape > 0.6):
+			line = minf(line, progress(_assignments[p].target))
+			count += 1
+	if count == 0:
+		return
+	# Defending deep in our half: the line can't stay higher than the ball.
+	line = minf(line, maxf(ball_prog - 0.06, 0.05))
+	if not tactics.offside_trap:
+		line -= 0.02
+	line_progress = line
+	for p in outfield:
+		if role_of(p) in BACK_LINE and not (role_of(p) in FULL_BACKS and shape > 0.6):
+			var t: Vector3 = _assignments[p].target
+			_assignments[p].target = Formation.to_world(line, t.z / PitchBuilder.HALF_WIDTH, attack_dir)
+
+
+func _defending(owner: PlayerController, outfield: Array[PlayerController], ball_pos: Vector3, ball_prog: float) -> void:
+	if outfield.is_empty():
+		return
 	var by_time := outfield.duplicate()
 	by_time.sort_custom(func(a: PlayerController, b: PlayerController) -> bool:
 		return _arrival(a, ball_pos) < _arrival(b, ball_pos))
-	if by_time.is_empty():
-		return
-	var presser: PlayerController = by_time[0]
-	_assignments[presser] = {"mode": Mode.PRESS, "target": ball_pos}
+	# Pressing: always in our half; in theirs only as high as the tactics say.
+	var engage := ball_prog < 0.5 + tactics.pressing * 0.5 or owner == null
+	var pressers := 1
+	if tactics.pressing > 0.65 and ball_prog > 0.55 and outfield.size() > 6:
+		pressers = 2
 	var own_goal := match_ctx.goal_center(-attack_dir)
-	if by_time.size() > 1 and owner != null:
-		var cover: PlayerController = by_time[1]
+	var used := 0
+	if engage:
+		for i in mini(pressers, by_time.size()):
+			_assignments[by_time[i]] = {"mode": Mode.PRESS, "target": ball_pos}
+			used += 1
+	if owner != null and by_time.size() > used:
+		var cover: PlayerController = by_time[used]
 		var behind := ball_pos + DirectionResolver.flat(own_goal - ball_pos).normalized() * 7.0
 		_assignments[cover] = {"mode": Mode.COVER, "target": behind}
-	# Others: mark the most dangerous free opponent near their slot.
+	# Others: mark the most dangerous free opponent near their slot (goal-side),
+	# defenders without dropping more than 5 m behind the line.
 	var marked := {}
 	for p in outfield:
 		if _assignments[p].mode != Mode.POSITION:
 			continue
 		var slot: Vector3 = _assignments[p].target
 		var best: PlayerController = null
-		var best_d := 14.0
+		var best_d := 12.0
 		for o in match_ctx.opponents_of(p):
-			if marked.has(o) or o == owner or match_ctx.is_keeper(o):
+			if marked.has(o) or o == owner or o.is_keeper:
 				continue
 			var d := o.global_position.distance_to(slot)
 			if d < best_d:
@@ -119,36 +176,47 @@ func _defending(owner: PlayerController, outfield: Array[PlayerController], ball
 				best = o
 		if best != null:
 			marked[best] = true
-			var goal_side := DirectionResolver.flat(own_goal - best.global_position).normalized() * 1.8
-			_assignments[p] = {"mode": Mode.MARK, "target": best.global_position + goal_side, "mark": best}
+			var target := best.global_position + DirectionResolver.flat(own_goal - best.global_position).normalized() * 1.8
+			if role_of(p) in BACK_LINE and progress(target) < line_progress - 0.05:
+				target = Formation.to_world(line_progress - 0.05, target.z / PitchBuilder.HALF_WIDTH, attack_dir)
+			_assignments[p] = {"mode": Mode.MARK, "target": target, "mark": best}
 
 
 func _attacking(owner: PlayerController, outfield: Array[PlayerController], ball_pos: Vector3) -> void:
 	var others := outfield.filter(func(p: PlayerController) -> bool: return p != owner)
 	if others.is_empty():
 		return
-	# Short support: the closest team-mate offers an open angle near the carrier.
+	# Short support: the closest team-mates offer open angles near the carrier.
 	others.sort_custom(func(a: PlayerController, b: PlayerController) -> bool:
 		return a.global_position.distance_to(ball_pos) < b.global_position.distance_to(ball_pos))
-	var supporter: PlayerController = others[0]
-	_assignments[supporter] = {"mode": Mode.SUPPORT, "target": _support_spot(owner)}
-	# Runner: the most advanced team-mate attacks the space behind the last defender.
-	var runner: PlayerController = null
+	var supporters := 2 if others.size() > 5 else 1
+	var taken: Array[Vector3] = []
+	for i in mini(supporters, others.size()):
+		var spot := _support_spot(owner, taken)
+		taken.append(spot)
+		_assignments[others[i]] = {"mode": Mode.SUPPORT, "target": spot}
+	# Runners: forwards and wingers on the last defender's shoulder, onside.
+	var line := _offside_line_x()
+	var ball_prog := progress(ball_pos)
 	for p in others:
-		if p == supporter:
+		if _assignments[p].mode != Mode.POSITION:
 			continue
-		if runner == null or p.global_position.x * attack_dir > runner.global_position.x * attack_dir:
-			runner = p
-	if runner != null and Formation.progress_of(ball_pos.x, attack_dir) > 0.3:
-		var line := _last_defender_x()
-		var tgt: Vector3 = _assignments[runner].target
-		tgt.x = clampf(line + attack_dir * 5.0, -48.0, 48.0)
-		_assignments[runner] = {"mode": Mode.RUN, "target": tgt}
+		var role := role_of(p)
+		if role in RUNNERS or (outfield.size() <= 5 and p == _most_advanced(others)):
+			if ball_prog > 0.3:
+				var tgt: Vector3 = _assignments[p].target
+				tgt.x = line - attack_dir * 0.6  # hold onside until the pass
+				_assignments[p] = {"mode": Mode.RUN, "target": tgt}
+		elif role in FULL_BACKS and ball_prog > 0.5 and signf(ball_pos.z) == signf(_assignments[p].target.z):
+			# Overlap down our side.
+			var tgt: Vector3 = _assignments[p].target
+			tgt.x = ball_pos.x + attack_dir * 8.0
+			_assignments[p] = {"mode": Mode.RUN, "target": tgt}
 
 
 ## Best of a ring of candidate spots around the carrier: away from opponents,
-## with a clear passing lane, slightly forward.
-func _support_spot(owner: PlayerController) -> Vector3:
+## with a clear passing lane, slightly forward, not on top of other supporters.
+func _support_spot(owner: PlayerController, taken: Array[Vector3]) -> Vector3:
 	var best := owner.global_position
 	var best_score := -INF
 	for deg: float in [-110.0, -70.0, -35.0, 0.0, 35.0, 70.0, 110.0]:
@@ -162,23 +230,26 @@ func _support_spot(owner: PlayerController) -> Vector3:
 		var score := space * 0.3 + dir.x * attack_dir * 1.5
 		if match_ctx.is_lane_blocked(owner, spot, 1.5):
 			score -= 4.0
+		for t in taken:
+			if t.distance_to(spot) < 8.0:
+				score -= 5.0
 		if score > best_score:
 			best_score = score
 			best = spot
 	return best
 
 
-func _last_defender_x() -> float:
-	var deepest := 0.0
-	var found := false
-	for o in match_ctx.players:
-		if o.team == team or match_ctx.is_keeper(o):
-			continue
-		var x := o.global_position.x * attack_dir
-		if not found or x > deepest:
-			deepest = x
-			found = true
-	return (deepest if found else 30.0) * attack_dir
+func _most_advanced(group: Array) -> PlayerController:
+	var best: PlayerController = null
+	for p: PlayerController in group:
+		if best == null or progress(p.global_position) > progress(best.global_position):
+			best = p
+	return best
+
+
+## World x of the opponents' second-last defender (offside line).
+func _offside_line_x() -> float:
+	return match_ctx.offside.line_x(team)
 
 
 static func _arrival(p: PlayerController, pos: Vector3) -> float:
