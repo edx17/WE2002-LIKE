@@ -24,6 +24,9 @@ var _sprint := false
 var _release := PlayerIntent.NONE
 var _release_charge := 0.0
 var _press := PlayerIntent.NONE
+## Where an incoming shot will cross the keeper's line (INF = none).
+var _shot_cross := Vector3.INF
+var _shot_time := 0.0
 
 
 func fill(intent: PlayerIntent, p: PlayerController, delta: float) -> void:
@@ -37,6 +40,14 @@ func fill(intent: PlayerIntent, p: PlayerController, delta: float) -> void:
 		_decide(p)
 	intent.move = _move
 	intent.sprint = _sprint
+	if _shot_cross != Vector3.INF and intent.dive_target == null:
+		# Set: a small adjusting step at most, then hold the stance (a keeper
+		# running sideways can't react).
+		var dz := _shot_cross.z - p.global_position.z
+		# With time (a long shot) he can cover more ground before the dive.
+		var steps := absf(dz) > 0.3 and (absf(dz) < 0.9 or _shot_time > 0.45)
+		intent.move = Vector2(0.0, signf(dz)) if steps else Vector2.ZERO
+		intent.sprint = false
 	intent.held = 0
 	if _press != PlayerIntent.NONE:
 		intent.press(_press)
@@ -72,12 +83,21 @@ func _decide(p: PlayerController) -> void:
 	var a := brain.assignment(p)
 	var target: Vector3 = a.target
 	var a_mode := int(a.mode)
-	if p.match_ctx.set_piece_active() and a_mode == TeamBrain.Mode.PRESS:
-		# Dead ball: keep the distance until it's played.
-		a_mode = TeamBrain.Mode.POSITION
+	if p.match_ctx.set_piece_active() and int(p.match_ctx.set_piece.team) != p.team:
+		# Dead ball: keep the distance until it's played, whatever the job.
+		if a_mode == TeamBrain.Mode.PRESS:
+			a_mode = TeamBrain.Mode.POSITION
+			target = p.global_position
 		var keep := SetPieces.min_distance(str(p.match_ctx.set_piece.kind)) + 0.5
-		var from_ball := DirectionResolver.flat(p.global_position - p.ball.global_position)
-		target = p.ball.global_position + (from_ball.normalized() if from_ball.length() > 0.1 else Vector3.RIGHT) * keep
+		var from_ball := DirectionResolver.flat(target - p.ball.global_position)
+		if from_ball.length() < keep:
+			if from_ball.length() < 0.1:
+				from_ball = DirectionResolver.flat(p.global_position - p.ball.global_position)
+			target = p.ball.global_position + (from_ball.normalized() if from_ball.length() > 0.1 else Vector3.RIGHT * -p.attack_dir) * keep
+	elif p.match_ctx.set_piece_active() and a_mode == TeamBrain.Mode.PRESS:
+		# Our dead ball: the taker plays it, the rest hold their places.
+		a_mode = TeamBrain.Mode.POSITION
+		target = p.global_position
 	match a_mode:
 		TeamBrain.Mode.PRESS:
 			if carrier != null and carrier.team != p.team:
@@ -100,13 +120,22 @@ func _decide(p: PlayerController) -> void:
 			mode = Mode.POSITION
 			_go(p, target, 1.5, 10.0)
 			# A loose ball rolling right past me: take it.
-			if carrier == null and p.global_position.distance_to(p.ball.global_position) < 4.0:
+			if carrier == null and not p.match_ctx.set_piece_active() \
+					and p.global_position.distance_to(p.ball.global_position) < 4.0:
 				_loose_ball(p)
 
 
 ## A pass is coming to me: meet the ball on its path, don't wait for it.
 func _receive(p: PlayerController) -> void:
 	mode = Mode.RECEIVE
+	var steer := receive_steer(p)
+	_move = steer[0]
+	_sprint = steer[1]
+
+
+## [stick, sprint] that takes `p` to where he can meet the moving ball.
+## Also used for a human receiver who hasn't touched the stick yet.
+static func receive_steer(p: PlayerController) -> Array:
 	var b := p.ball.global_position
 	var v := DirectionResolver.flat(p.ball.linear_velocity)
 	var meet := b
@@ -118,8 +147,7 @@ func _receive(p: PlayerController) -> void:
 			break
 		meet = q
 		t += 0.1
-	_move = _towards(p, meet, 0.2)
-	_sprint = p.global_position.distance_to(meet) > 3.0
+	return [_towards(p, meet, 0.2), p.global_position.distance_to(meet) > 3.0]
 
 
 ## Walk/run to a point; sprint only when far from it.
@@ -145,8 +173,15 @@ func _on_ball(p: PlayerController) -> void:
 		threat_dist = p.global_position.distance_to(threat.global_position)
 
 	# 1. Shoot.
+	# Like a real player: shoot from the box, from distance only with a clear
+	# sight of goal and a decent angle. Long shots rarely go in (KickSolver).
 	var lane_clear := not m.is_lane_blocked(p, goal, 1.8)
-	if dist < 24.0 and (lane_clear or threat_dist < 1.8 or dist < 13.0):
+	var open_deg := rad_to_deg(absf(DirectionResolver.signed_angle(
+		goal + Vector3(0, 0, PitchBuilder.GOAL_HALF_WIDTH) - p.global_position,
+		goal - Vector3(0, 0, PitchBuilder.GOAL_HALF_WIDTH) - p.global_position)))
+	var box := m.in_penalty_area(p.global_position, p.attack_dir)
+	var long_range := dist < 25.0 and lane_clear and open_deg > 14.0 and rng.randf() < 0.08
+	if (box and open_deg > 12.0 and (lane_clear or threat_dist < 1.8 or dist < 11.0)) or long_range:
 		_shoot(p, dist)
 		return
 
@@ -423,13 +458,18 @@ func _keeper(p: PlayerController, carrier: PlayerController) -> void:
 	var to_ball := DirectionResolver.flat(b - own_goal)
 	var out := clampf(to_ball.length() * 0.12, 0.8, 5.5)
 	var spot := own_goal + to_ball.normalized() * out
-	spot.z = clampf(spot.z, -PitchBuilder.GOAL_HALF_WIDTH, PitchBuilder.GOAL_HALF_WIDTH)
+	# From far away the danger is either post: stay near the middle.
+	var max_z := lerpf(PitchBuilder.GOAL_HALF_WIDTH, 0.8, clampf((to_ball.length() - 14.0) / 16.0, 0.0, 1.0))
+	spot.z = clampf(spot.z, -max_z, max_z)
 	_move = _towards(p, spot, 0.25)
 	_sprint = p.global_position.distance_to(spot) > 4.0
 
 
-## Every frame: if a shot will cross my line out of my standing reach, dive.
+## Every frame: a shot coming at my goal. After a reaction delay, shuffle
+## across to the line of the ball; dive when it will pass out of standing
+## reach and it's about to arrive (diving too early leaves you on the floor).
 func _keeper_reflex(intent: PlayerIntent, p: PlayerController) -> void:
+	_shot_cross = Vector3.INF
 	var ball := p.ball
 	if ball.owner_player != null or not p.can_dive():
 		return
@@ -438,15 +478,18 @@ func _keeper_reflex(intent: PlayerIntent, p: PlayerController) -> void:
 	if signf(v.x) != signf(own_goal_x) or absf(v.x) < 6.0:
 		return
 	var t := (p.global_position.x - ball.global_position.x) / v.x
-	if t <= 0.0 or t > 0.9:
+	if t <= 0.0 or t > 1.2:
 		return
 	var cross := ball.global_position + v * t
 	cross.y -= 0.5 * Ball.GRAVITY * t * t
-	var lateral := absf(cross.z - p.global_position.z)
 	if absf(cross.z) > PitchBuilder.GOAL_HALF_WIDTH + 1.0 or cross.y > 2.7:
 		return
-	# Reaction: better keepers commit later and more accurately.
-	if lateral > 0.7 and lateral < p.dive_reach() and t < lerpf(0.35, 0.6, p.stats.n(&"goalkeeping")):
+	if ball.kick_age() < p.reaction_delay():
+		return  # still reading it
+	_shot_cross = cross
+	_shot_time = t
+	var lateral := absf(cross.z - p.global_position.z)
+	if lateral > 0.6 and lateral < p.dive_reach() + 0.6 and t < lerpf(0.3, 0.42, p.stats.n(&"goalkeeping")):
 		intent.dive_target = cross
 
 

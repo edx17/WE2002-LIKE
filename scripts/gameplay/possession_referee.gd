@@ -11,6 +11,10 @@ var ball: Ball
 var players: Array[PlayerController] = []
 var rng := RandomNumberGenerator.new()
 
+## Dead ball (kick-off, free kick, corner…): until the taker plays it, only
+## his team may touch the ball. -1 = open play.
+var protected_team := -1
+
 var _cooldowns := {}
 var _contest_timer := 0.0
 
@@ -24,6 +28,8 @@ func set_cooldown(p: PlayerController, seconds: float) -> void:
 
 
 func can_touch(p: PlayerController) -> bool:
+	if protected_team >= 0 and p.team != protected_team:
+		return false
 	return float(_cooldowns.get(p, 0.0)) <= 0.0 and p.can_play_ball() and not p.frozen
 
 
@@ -71,23 +77,29 @@ func _free_ball() -> void:
 		event.emit("REBOTE EN %s" % BallInteraction.ZONE_NAMES[best.interaction.last_zone])
 
 
-## Balón dividido: an opponent whose foot is closer to the ball than the
-## dribbler's can knock it loose.
+## Balón dividido: walking into the dribbler is NOT enough to take the ball
+## (that was the "arcade" feel). Only when the ball is away from his feet
+## (a long touch, a turn) and the defender is facing it can it be poked away.
+## Winning it cleanly is the tackle button's job.
 func _contest(owner: PlayerController) -> void:
 	if _contest_timer > 0.0:
+		return
+	var d_own := DirectionResolver.flat(ball.global_position - owner.global_position).length()
+	var exposed := d_own > 0.75 or owner.state == PlayerController.State.TURN
+	if not exposed:
 		return
 	for p in players:
 		if p.team == owner.team or not can_touch(p) or p.state == PlayerController.State.SLIDE:
 			continue
-		var d_opp := DirectionResolver.flat(ball.global_position - p.global_position).length()
-		var d_own := DirectionResolver.flat(ball.global_position - owner.global_position).length()
-		if d_opp > 0.6 or d_opp >= d_own:
+		var to_ball := DirectionResolver.flat(ball.global_position - p.global_position)
+		var d_opp := to_ball.length()
+		if d_opp > 0.55 or d_opp >= d_own or p.facing.dot(to_ball.normalized()) < 0.3:
 			continue
-		_contest_timer = 0.3
+		_contest_timer = 0.45
 		var att := owner.stats.n(&"control") * 0.5 + owner.stats.n(&"strength") * 0.3 + owner.stats.n(&"balance") * 0.2
 		var def := p.stats.n(&"tackling") * 0.5 + p.stats.n(&"strength") * 0.3 + p.stats.n(&"aggression") * 0.2
-		if rng.randf() < clampf(0.5 + (def - att) * 0.8, 0.1, 0.9):
-			var dir := (DirectionResolver.flat(ball.global_position - p.global_position).normalized() + p.facing).normalized()
+		if rng.randf() < clampf(0.3 + (def - att) * 0.8, 0.05, 0.6):
+			var dir := (to_ball.normalized() + p.facing).normalized()
 			ball.kick(dir * rng.randf_range(2.5, 5.0), Vector3.ZERO, p)
 			set_cooldown(owner, 0.3)
 			event.emit("BALÓN DIVIDIDO")
@@ -99,6 +111,8 @@ func resolve_tackle(tackler: PlayerController) -> bool:
 	var owner := ball.owner_player as PlayerController
 	if owner == null or owner.team == tackler.team or ball.held:
 		return false
+	if protected_team >= 0 and tackler.team != protected_team:
+		return false  # dead ball: not yet in play
 	var to_ball := DirectionResolver.flat(ball.global_position - tackler.global_position)
 	if to_ball.length() > 1.5 or tackler.facing.dot(to_ball.normalized()) < 0.2:
 		event.emit("QUITE AL AIRE")
@@ -124,6 +138,8 @@ func resolve_tackle(tackler: PlayerController) -> bool:
 ## Slide tackle contact check, called every frame of the slide.
 ## Returns true once something has been hit.
 func check_slide(slider: PlayerController) -> bool:
+	if protected_team >= 0 and slider.team != protected_team:
+		return false
 	var to_ball := DirectionResolver.flat(ball.global_position - slider.global_position)
 	if not ball.held and ball.global_position.y < 0.5 and to_ball.length() < 1.15 and slider.facing.dot(to_ball.normalized()) > 0.0:
 		var owner := ball.owner_player as PlayerController

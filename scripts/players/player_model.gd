@@ -43,7 +43,7 @@ static func attach(player: PlayerController, appearance: String, kit: Dictionary
 		player.add_child(tree)
 		tree.anim_player = tree.get_path_to(anim_player)
 		tree.active = true
-		player.animation_selector.set_driver(AnimationTreeDriver.new(tree, visual))
+		player.animation_selector.set_driver(AnimationTreeDriver.new(tree, visual, pose_fps()))
 	return true
 
 
@@ -81,6 +81,12 @@ static func apply_kit(model: Node, kit: Dictionary, number := 0) -> void:
 					var face := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
 					face.texture_filter = texture_filter()
 					mi.set_surface_override_material(i, face)
+
+
+## Classic look: poses stepped at a low rate (data/look: players.animation_fps).
+static func pose_fps() -> float:
+	var players: Dictionary = LookProfile.load_profile().get("players", {})
+	return float(players.get("animation_fps", 0.0))
 
 
 ## Classic look: low-res textures shown unfiltered (data/look: players.texture_filter).

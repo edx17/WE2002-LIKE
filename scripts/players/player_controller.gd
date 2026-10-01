@@ -17,7 +17,14 @@ signal kicked(player: PlayerController, type: int, result: KickSolver.KickResult
 const GRAVITY := 9.81
 const DECELERATION := 22.0
 ## Hard turns above this angle at speed trigger the TURN state (brake + pivot).
-const HARD_TURN_DEG := 110.0
+const HARD_TURN_DEG := 100.0
+## Speed kept when the (8-way) direction changes while running: the body
+## snaps to the new direction and pays for it, instead of curving smoothly.
+const CUT_45_KEEP := 0.9
+const CUT_90_KEEP := 0.7
+## Extra cost with the ball at your feet.
+const CUT_BALL_KEEP := 0.92
+const TURN_TIME := 0.26
 const FOLLOW_THROUGH := 0.12
 const TACKLE_FAIL_EXTRA := 0.25
 const ONE_TOUCH_WINDOW := 0.7
@@ -70,6 +77,13 @@ var turn_angle_deg := 0.0
 var turn_speed_deg := 0.0
 var last_kick_type := -1
 
+## Pass on its way to a human-controlled receiver: until he moves the stick
+## to a NEW direction, his legs go to meet the ball (the pad just switched
+## to him and he's still holding the direction he passed with).
+var receive_assist := false
+var receive_lock := Vector2.ZERO
+var _last_dir := Vector3.ZERO
+
 var _kick := {}
 var _queued := {}
 var _action_resolved := false
@@ -87,11 +101,11 @@ func _ready() -> void:
 # --- attribute-derived tuning -------------------------------------------------
 
 func jog_speed() -> float:
-	return lerpf(5.6, 7.0, stats.n(&"speed")) * fitness()
+	return lerpf(5.0, 6.2, stats.n(&"speed")) * fitness()
 
 
 func sprint_speed() -> float:
-	return lerpf(7.2, 9.3, stats.n(&"speed")) * fitness()
+	return lerpf(6.8, 8.5, stats.n(&"speed")) * fitness()
 
 
 ## Tiredness and injury slow you down: 1.0 fresh, ~0.82 exhausted.
@@ -115,8 +129,12 @@ func update_stamina(game_minutes: float) -> void:
 	stamina = clampf(stamina, 0.0, 1.0)
 
 
+## Two phases, like the original: you're at jogging pace almost at once,
+## but building up to a full sprint takes the best part of a second.
 func acceleration() -> float:
-	return lerpf(9.0, 18.0, stats.n(&"acceleration"))
+	if speed < jog_speed():
+		return lerpf(10.0, 16.0, stats.n(&"acceleration"))
+	return lerpf(2.6, 4.6, stats.n(&"acceleration"))
 
 
 ## rad/s. Fast enough to feel instant between neighbouring directions, slow
@@ -154,7 +172,12 @@ func can_dive() -> bool:
 
 ## Lateral distance a keeper can cover with a dive.
 func dive_reach() -> float:
-	return lerpf(1.6, 2.9, stats.n(&"goalkeeping"))
+	return lerpf(1.4, 2.5, stats.n(&"goalkeeping"))
+
+
+## Seconds a keeper needs to read a shot before he can move for it.
+func reaction_delay() -> float:
+	return lerpf(0.26, 0.12, stats.n(&"goalkeeping") * 0.7 + stats.n(&"reaction") * 0.3)
 
 
 func opponent_has_ball() -> bool:
@@ -174,6 +197,8 @@ func _physics_process(delta: float) -> void:
 		intent.clear()
 	else:
 		input_source.fill(intent, self, delta)
+		if receive_assist:
+			_assist_reception()
 
 	match state:
 		State.PASS, State.SHOOT:
@@ -208,6 +233,19 @@ func _physics_process(delta: float) -> void:
 	animation_selector.update(self, delta)
 
 
+func _assist_reception() -> void:
+	if match_ctx == null or match_ctx.pass_receiver != self or ball.owner_player != null or input_source == ai:
+		receive_assist = false
+		return
+	var q := DirectionResolver.quantize(intent.move, direction_steps)
+	if q != Vector2.ZERO and q != receive_lock:
+		receive_assist = false  # the human took over
+		return
+	var steer := PlayerAI.receive_steer(self)
+	intent.move = steer[0]
+	intent.sprint = intent.sprint or steer[1]
+
+
 func _update_locomotion(delta: float) -> void:
 	var carrying := has_ball()
 	var q := DirectionResolver.quantize(intent.move, direction_steps)
@@ -223,10 +261,23 @@ func _update_locomotion(delta: float) -> void:
 	var top := sprint_speed() if intent.sprint else jog_speed()
 	if carrying and ball.held and not is_keeper:
 		top = 0.0  # throw-in: feet planted, can only turn
+	if match_ctx != null and match_ctx.set_piece_taker() == self:
+		top = 0.0  # dead ball: aim and kick, no walking off with it
 	if carrying:
 		top *= lerpf(0.86, 0.95, stats.n(&"control"))
 
 	var prev_facing := facing
+	if desired_dir != Vector3.ZERO and _last_dir != Vector3.ZERO and desired_dir != _last_dir and speed > 1.0:
+		# A cut. Digital direction change = a step to plant and push off.
+		var cut := rad_to_deg(absf(DirectionResolver.signed_angle(_last_dir, desired_dir)))
+		if cut < HARD_TURN_DEG:
+			var keep := lerpf(1.0, CUT_45_KEEP, clampf(cut / 45.0, 0.0, 1.0))
+			if cut > 45.0:
+				keep = lerpf(CUT_45_KEEP, CUT_90_KEEP, clampf((cut - 45.0) / 45.0, 0.0, 1.0))
+			if carrying:
+				keep *= lerpf(CUT_BALL_KEEP, 1.0, stats.n(&"agility") * 0.5 + stats.n(&"control") * 0.5)
+			speed *= keep
+	_last_dir = desired_dir
 	if desired_dir != Vector3.ZERO:
 		var diff := DirectionResolver.signed_angle(facing, desired_dir)
 		turn_angle_deg = rad_to_deg(diff)
@@ -242,7 +293,7 @@ func _update_locomotion(delta: float) -> void:
 		var misalign := absf(DirectionResolver.signed_angle(facing, desired_dir))
 		var target := top * lerpf(0.35, 1.0, cos(minf(misalign, PI * 0.5)))
 		if state == State.TURN:
-			target = top * 0.3
+			target = top * 0.2
 		var rate_v := acceleration() if speed < target else DECELERATION
 		speed = move_toward(speed, target, rate_v * delta)
 	else:
@@ -253,7 +304,7 @@ func _update_locomotion(delta: float) -> void:
 	turn_speed_deg = lerpf(turn_speed_deg, inst, 1.0 - exp(-10.0 * delta))
 
 	if state == State.TURN:
-		if state_time > 0.2 or absf(turn_angle_deg) < 20.0:
+		if state_time > TURN_TIME + (0.08 if carrying else 0.0) or (absf(turn_angle_deg) < 20.0 and state_time > 0.12):
 			_set_state(_locomotion_state())
 	else:
 		_set_state(_locomotion_state())
@@ -335,10 +386,10 @@ func _set_state(new_state: int) -> void:
 # --- kicks -------------------------------------------------------------------
 
 func _start_dive(target: Vector3) -> void:
+	# Aim the hands, not the body, at the ball: outstretched arms add a bit.
 	var lateral := DirectionResolver.flat(target - global_position)
-	dive_velocity = lateral / 0.33
-	if dive_velocity.length() > 8.0:
-		dive_velocity = dive_velocity.normalized() * 8.0
+	var body := maxf(lateral.length() - 0.6, 0.0)
+	dive_velocity = lateral.normalized() * minf(body / 0.3, lerpf(4.0, 5.5, stats.n(&"goalkeeping")))
 	speed = 0.0
 	_set_state(State.DIVE)
 

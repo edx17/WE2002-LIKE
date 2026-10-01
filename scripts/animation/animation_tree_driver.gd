@@ -14,12 +14,19 @@ var visual: Node3D
 var _current := &"Locomotion"
 var _last_state_time := 0.0
 var _roll := 0.0
+## > 0: poses are sampled at this rate and held in between (the stepped,
+## "robotic" motion of the PS1 era). 0 = smooth, every frame.
+var pose_fps := 0.0
+var _pose_acc := 0.0
 
 
-func _init(animation_tree: AnimationTree, visual_node: Node3D) -> void:
+func _init(animation_tree: AnimationTree, visual_node: Node3D, stepped_fps := 0.0) -> void:
 	tree = animation_tree
 	visual = visual_node
 	playback = tree.get("parameters/playback") as AnimationNodeStateMachinePlayback
+	pose_fps = stepped_fps
+	if pose_fps > 0.0:
+		tree.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 
 
 func apply(d: AnimationSelector.Descriptor, _p: PlayerController, delta: float) -> void:
@@ -36,6 +43,15 @@ func apply(d: AnimationSelector.Descriptor, _p: PlayerController, delta: float) 
 	_last_state_time = d.state_time
 
 	var roll := deg_to_rad(clampf(d.turn_deg, -60.0, 60.0) * 0.2) * d.speed_blend
-	_roll = lerpf(_roll, roll, 1.0 - exp(-14.0 * delta))
+	if pose_fps > 0.0:
+		_pose_acc += delta
+		var step := 1.0 / pose_fps
+		if _pose_acc < step:
+			return  # hold the pose (and the lean) until the next step
+		tree.advance(_pose_acc)
+		_roll = lerpf(_roll, roll, 1.0 - exp(-14.0 * _pose_acc))
+		_pose_acc = 0.0
+	else:
+		_roll = lerpf(_roll, roll, 1.0 - exp(-14.0 * delta))
 	visual.rotation = Vector3(0.0, 0.0, _roll)
 	visual.position.y = 0.0

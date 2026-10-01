@@ -30,6 +30,7 @@ var spin := Vector3.ZERO
 var _control_velocity := Vector3.ZERO
 var _control_rate := 0.0
 var _pending_velocity: Variant = null
+var _kick_frame := 0
 var _pending_position: Variant = null
 
 
@@ -48,7 +49,13 @@ func is_grounded() -> bool:
 
 
 ## Strike the ball. Replaces its velocity; the kicker loses possession.
+## Seconds since the last kick (keepers need time to react to it).
+func kick_age() -> float:
+	return float(Engine.get_physics_frames() - _kick_frame) / float(Engine.physics_ticks_per_second)
+
+
 func kick(velocity: Vector3, new_spin := Vector3.ZERO, by: Node = null) -> void:
+	_kick_frame = Engine.get_physics_frames()
 	_pending_velocity = velocity.limit_length(MAX_SPEED)
 	spin = new_spin
 	owner_player = null

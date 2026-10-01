@@ -58,6 +58,10 @@ func _run() -> void:
 	_test_master_league()
 	await _test_master_league_match()
 	await _test_recorder()
+	await _test_kickoff_protected()
+	await _test_pass_reaches_held_stick()
+	await _test_no_free_steals()
+	await _test_square_cuts()
 	print("\n%d comprobaciones, %d fallos" % [_checks, _failures])
 	quit(1 if _failures > 0 else 0)
 
@@ -126,6 +130,27 @@ func _test_kick_formulas() -> void:
 	var bad := KickSolver.solve(req, rng)
 	check(bad.mishit and not good.mishit, "contacto 0.3 = le pegó mal")
 	check(bad.velocity.length() < good.velocity.length(), "mal contacto sale más flojo")
+
+	# Firmness: from far you hope, you don't place it.
+	check(KickSolver.distance_accuracy(30.0) < KickSolver.distance_accuracy(12.0), "de lejos se pierde precisión")
+	check(KickSolver.shot_spread_deg(30.0, 0.6) > 2.0 * KickSolver.shot_spread_deg(11.0, 0.9), "dispersión: 30 m >> 11 m")
+	var on_target := {}
+	for d: float in [11.0, 30.0]:
+		var hits := 0
+		var shot := KickSolver.KickRequest.new()
+		shot.type = KickSolver.KickType.SHOT
+		shot.stats.shooting = 75
+		shot.origin = Vector3(PitchBuilder.HALF_LENGTH - d, 0.11, 0)
+		shot.target = Vector3(PitchBuilder.HALF_LENGTH, 0, 2.5)
+		shot.power = 0.6
+		for i in 300:
+			var r := KickSolver.solve(shot, rng)
+			var z := shot.origin.z + r.velocity.z / maxf(r.velocity.x, 0.01) * d
+			if absf(z) < PitchBuilder.GOAL_HALF_WIDTH:
+				hits += 1
+		on_target[d] = hits / 300.0
+	check(on_target[11.0] > 0.8, "remate a un palo desde 11 m: %d%% entre los palos" % roundi(on_target[11.0] * 100))
+	check(on_target[30.0] < 0.6, "remate a un palo desde 30 m: %d%% entre los palos" % roundi(on_target[30.0] * 100))
 
 
 func _test_generated_model() -> void:
@@ -955,3 +980,147 @@ func _test_recorder() -> void:
 	m.queue_free()
 	await _frames(1)
 
+
+
+# --- firmness (PS1 feel) ---------------------------------------------------------------
+
+func _test_kickoff_protected() -> void:
+	print("Firmeza: saque inicial")
+	var m := _new_match("stage3_11v11")
+	await _frames(2)
+	m.kickoff(0)
+	var taker := m._kickoff_taker(0)
+	var idle := ScriptedInput.new()
+	taker.input_source = idle
+	await _frames(2)
+	var inside := 0
+	for p in m.players:
+		if p.team == 1 and DirectionResolver.flat(p.global_position).length() < SetPieces.WALL_DISTANCE:
+			inside += 1
+	check(inside == 0, "los rivales arrancan fuera del círculo central")
+	var touched := false
+	for i in 480:  # 4 s thinking, like a human
+		await physics_frame
+		var last := m.ball.last_touch as PlayerController
+		if last != null and last.team == 1:
+			touched = true
+			break
+	check(not touched, "nadie del rival toca la pelota antes de que saque")
+	check(m.set_piece_active(), "el saque sigue esperando al humano")
+	idle.move = Vector2.LEFT
+	idle.release = PlayerIntent.Action.PASS
+	await _frames(30)
+	check(not m.set_piece_active(), "al tocarla, la pelota está en juego")
+	m.queue_free()
+	await _frames(1)
+
+
+## The pad jumps to the receiver while the human still holds the direction he
+## passed with: the receiver must still go to the ball, not run away from it.
+func _test_pass_reaches_held_stick() -> void:
+	print("Firmeza: el pase llega aunque el humano siga apretando la dirección")
+	var m := _new_match("stage3_11v11")
+	await _frames(2)
+	m._end_set_piece()
+	var passer: PlayerController = null
+	var mate: PlayerController = null
+	for p in m.players:
+		if p.team == 0 and not p.is_keeper:
+			if passer == null:
+				passer = p
+			elif mate == null:
+				mate = p
+	var pin := ScriptedInput.new()
+	var rin := ScriptedInput.new()
+	var ok := 0
+	var cases := [[10.0, 0.0], [18.0, 30.0], [24.0, -45.0], [15.0, 90.0]]
+	for c: Array in cases:
+		var i := 0
+		for p in m.players:
+			if p != passer and p != mate:
+				p.input_source = null
+				p.teleport(Vector3(40.0 + (i % 4) * 3.0, 0, -30.0 + (i / 4) * 4.0), Vector3.RIGHT)
+				i += 1
+		passer.input_source = pin
+		mate.input_source = rin
+		var origin := Vector3(-20, 0, 0)
+		passer.teleport(origin, Vector3.RIGHT)
+		m.ball.place(origin + Vector3(0.55, Ball.RADIUS, 0))
+		var dir := Vector3.RIGHT.rotated(Vector3.UP, deg_to_rad(c[1]))
+		mate.teleport(origin + dir * float(c[0]), -dir)
+		pin.move = Vector2.ZERO
+		rin.move = Vector2.ZERO
+		await _frames(70)
+		var stick := DirectionResolver.to_stick(dir).normalized()
+		pin.move = stick
+		pin.release = PlayerIntent.Action.PASS
+		pin.charge = 0.3
+		await _frames(20)
+		pin.move = Vector2.ZERO
+		rin.move = stick
+		for f in 480:
+			await physics_frame
+			if mate.has_ball():
+				ok += 1
+				break
+		rin.move = Vector2.ZERO
+		m.offside.reset()
+	check(ok == cases.size(), "pases recibidos: %d/%d" % [ok, cases.size()])
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_no_free_steals() -> void:
+	print("Firmeza: pegarse al que conduce no alcanza para robarla")
+	var m := _new_match("stage1_1v1")
+	await _frames(2)
+	m._end_set_piece()
+	var att := m.players[0]
+	var def := m.players[1]
+	var a_in := ScriptedInput.new()
+	var d_in := ScriptedInput.new()
+	att.input_source = a_in
+	def.input_source = d_in
+	att.teleport(Vector3(0, 0, 0), Vector3.RIGHT)
+	m.ball.place(Vector3(0.55, Ball.RADIUS, 0))
+	def.teleport(Vector3(1.6, 0, 0.3), Vector3.LEFT)
+	await _frames(20)
+	check(att.has_ball(), "el atacante controla")
+	# The defender just leans on him (no button) for 3 s.
+	var lost := false
+	for i in 360:
+		var to := DirectionResolver.flat(att.global_position + att.facing * 0.6 - def.global_position)
+		d_in.move = DirectionResolver.to_stick(to).normalized() if to.length() > 0.3 else Vector2.ZERO
+		await physics_frame
+		if not att.has_ball():
+			lost = true
+			break
+	check(not lost, "quieto y protegiendo, no se la sacan sin entrar")
+	m.queue_free()
+	await _frames(1)
+
+
+func _test_square_cuts() -> void:
+	print("Firmeza: cambios de dirección 'cuadrados'")
+	var m := _new_match("stage0_solo")
+	await _frames(2)
+	var p := m.players[0]
+	var input := ScriptedInput.new()
+	p.input_source = input
+	m.ball.place(Vector3(0, Ball.RADIUS, 30))
+	p.teleport(Vector3(-40, 0, 0), Vector3.RIGHT)
+	await _frames(3)
+	input.move = Vector2.RIGHT
+	input.sprint = true
+	await _frames(50)
+	check(p.speed > p.jog_speed() * 0.85, "llega rápido al trote (%.1f m/s en 0.4 s)" % p.speed)
+	check(p.speed < p.sprint_speed() * 0.85, "pero el pique completo tarda (%.1f de %.1f)" % [p.speed, p.sprint_speed()])
+	await _frames(170)
+	var before := p.speed
+	input.move = Vector2.DOWN  # 90° cut
+	await _frames(2)
+	check(p.speed < before * 0.78, "un corte de 90° cuesta velocidad (%.1f → %.1f m/s)" % [before, p.speed])
+	await _frames(20)
+	check(p.facing.dot(Vector3.BACK) > 0.99, "el cuerpo ya apunta a la nueva dirección (sin curva)")
+	m.queue_free()
+	await _frames(1)

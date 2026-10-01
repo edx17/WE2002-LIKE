@@ -39,6 +39,8 @@
     "surround": "#1c3319"
   },
   "players": {
-    "texture_filter": "nearest"
+    "texture_filter": "nearest",
+    "animation_fps": 20,
+    "_animation_fps": "Poses a 20 cuadros por segundo, sostenidas entre medio: el movimiento 'escalonado' de PS1. 0 = suave."
   }
 }

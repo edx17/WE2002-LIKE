@@ -88,6 +88,8 @@ var stats := {"saves": 0, "passes": 0, "passes_completed": 0, "shots": 0}
 var _pending_pass: PlayerController = null
 ## Team-mate a pass in flight is meant for (he comes to meet it), or null.
 var pass_receiver: PlayerController = null
+## Half-angle of the cone in which a pass looks for a team-mate.
+const PASS_CONE_DEG := 50.0
 
 var _stop_timer := 0.0
 var _restart := Callable()
@@ -500,17 +502,35 @@ func set_piece_active() -> bool:
 	return not set_piece.is_empty()
 
 
-## Set-piece positions are held until the taker plays the ball (or 6 s pass).
+## Set-piece positions are held until the taker plays the ball. A human
+## taker can think as long as he wants (like the original); an AI taker that
+## somehow never kicks frees the ball after 6 s.
 func _update_set_piece(delta: float) -> void:
 	if set_piece.is_empty():
 		return
 	set_piece.time += delta
-	if set_piece.time > 6.0:
+	var taker := set_piece.get("taker") as PlayerController
+	var ai_taker := taker == null or taker.input_source == taker.ai
+	# (the first frames the ball may still be on its way to the spot)
+	var moved: bool = set_piece.time > 0.2 \
+		and DirectionResolver.flat(ball.global_position - (set_piece.spot as Vector3)).length() > 2.5
+	if (set_piece.time > 6.0 and ai_taker) or moved:
 		_end_set_piece()
+
+
+## The player who must play the dead ball (planted until he does), or null.
+func set_piece_taker() -> PlayerController:
+	return set_piece.get("taker") as PlayerController if not set_piece.is_empty() else null
+
+
+func _begin_set_piece(kind: String, team: int, taker: PlayerController, spot: Vector3) -> void:
+	set_piece = {"kind": kind, "team": team, "taker": taker, "time": 0.0, "spot": DirectionResolver.flat(spot)}
+	referee.protected_team = team
 
 
 func _end_set_piece() -> void:
 	set_piece = {}
+	referee.protected_team = -1
 	for brain: TeamBrain in brains:
 		if brain != null:
 			brain.set_piece_targets.clear()
@@ -681,9 +701,28 @@ func kickoff(team: int) -> void:
 		if brains[p.team] != null:
 			home = (brains[p.team] as TeamBrain).kickoff_position(p)
 		p.teleport(home, Vector3.RIGHT * p.attack_dir)
+	# Everyone in his own half; the rivals outside the centre circle.
+	for p in players:
+		var pos := p.global_position
+		if pos.x * p.attack_dir > -0.5:
+			pos.x = -0.5 * p.attack_dir
+		if p.team != team and DirectionResolver.flat(pos).length() < SetPieces.WALL_DISTANCE + 0.5:
+			var away := DirectionResolver.flat(pos)
+			if away.length() < 0.1:
+				away = Vector3(-p.attack_dir, 0, 0)
+			pos = away.normalized() * (SetPieces.WALL_DISTANCE + 0.5)
+			if pos.x * p.attack_dir > -0.5:
+				pos.x = -0.5 * p.attack_dir
+				pos.z = signf(pos.z if pos.z != 0.0 else 1.0) * (SetPieces.WALL_DISTANCE + 0.5)
+		if pos != p.global_position:
+			p.teleport(pos, Vector3.RIGHT * p.attack_dir)
 	if taker != null:
 		taker.teleport(Vector3(-0.6 * taker.attack_dir, 0, 0), Vector3.RIGHT * taker.attack_dir)
 		_give_control(taker)
+	# The kick-off is a dead ball like any other: nobody from the other team
+	# can touch it until it has been played.
+	if players.any(func(p: PlayerController) -> bool: return p.team != team):
+		_begin_set_piece("SAQUE INICIAL", team, taker, Vector3.ZERO)
 	camera.snap()
 	restarted.emit("SAQUE INICIAL")
 
@@ -716,7 +755,7 @@ func _restart_at(team: int, spot: Vector3, kind: String) -> void:
 			taker.teleport(Vector3(spot.x, 0, spot.z), face)
 			ball.hold(taker)
 	offside.reset()
-	set_piece = {"kind": kind, "team": team, "taker": taker, "time": 0.0}
+	_begin_set_piece(kind, team, taker, spot)
 	SetPieces.arrange(self, kind, team, spot, taker)
 	restarted.emit(kind)
 
@@ -941,7 +980,9 @@ func pass_target(p: PlayerController, type: int, dir: Vector3, power: float) -> 
 	for mate in teammates_of(p):
 		var to := DirectionResolver.flat(mate.global_position - p.global_position)
 		var angle := absf(DirectionResolver.signed_angle(dir, to.normalized()))
-		if angle > deg_to_rad(40.0):
+		# Generous WE-style assist: the stick picks the team-mate, the bar
+		# only decides the weight of the pass.
+		if angle > deg_to_rad(PASS_CONE_DEG) or to.length() > 45.0:
 			continue
 		var s := -rad_to_deg(angle) * 2.0 - to.length() * 0.3
 		if s > best_score:
@@ -984,6 +1025,9 @@ func _on_kicked(p: PlayerController, type: int, result: KickSolver.KickResult) -
 		_pending_pass = p
 	pass_receiver = _last_receiver if type != KickSolver.KickType.SHOT and _last_receiver != null \
 		and _last_receiver.team == p.team else null
+	if pass_receiver != null:
+		pass_receiver.receive_assist = true
+		pass_receiver.receive_lock = DirectionResolver.quantize(p.intent.move, p.direction_steps)
 	_last_kicker = p
 	# WE: control follows the pass to its receiver.
 	var pad := pad_of(p)

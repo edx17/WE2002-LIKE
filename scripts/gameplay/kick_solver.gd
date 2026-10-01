@@ -97,6 +97,20 @@ static func accuracy(skill_n: float, pressure: float, movement: float, weak_foot
 	return clampf(player_accuracy * pressure_modifier * movement_modifier * weak_foot_modifier, 0.05, 1.0)
 
 
+## Shooting from far is hard: 1.0 inside ~11 m, 0.6 from 33 m and beyond.
+static func distance_accuracy(distance: float) -> float:
+	return lerpf(1.0, 0.6, clampf((distance - 11.0) / 22.0, 0.0, 1.0))
+
+
+## Maximum horizontal error of a shot (degrees). Even a perfect striker has
+## some spread, which grows with distance; on top of that, every point of
+## accuracy lost opens it up. ~±2° from the spot for a crack, ±15° from 30 m
+## for an average player: from distance you hope, you don't place it.
+static func shot_spread_deg(distance: float, acc: float) -> float:
+	var base := lerpf(2.0, 7.0, clampf((distance - 11.0) / 22.0, 0.0, 1.0))
+	return base + 26.0 * (1.0 - acc)
+
+
 ## Speed a rolling ball needs to cover `distance` and still arrive at
 ## `arrive_speed`, accounting for rolling resistance and quadratic drag.
 ## Closed form of v·dv/ds = -(ROLL_DECEL + c·v²).
@@ -139,7 +153,11 @@ static func solve(req: KickRequest, rng: RandomNumberGenerator) -> KickResult:
 	var distance := flat.length()
 	var dir := flat / distance
 
-	r.error_deg = _noise(rng) * float(MAX_ERROR_DEG.get(req.type, 12.0)) * (1.0 - r.accuracy)
+	if req.type == KickType.SHOT or req.type == KickType.HEADER:
+		r.accuracy *= distance_accuracy(distance)
+		r.error_deg = _noise(rng) * shot_spread_deg(distance, r.accuracy)
+	else:
+		r.error_deg = _noise(rng) * float(MAX_ERROR_DEG.get(req.type, 12.0)) * (1.0 - r.accuracy)
 	dir = dir.rotated(Vector3.UP, deg_to_rad(r.error_deg))
 
 	match req.type:
@@ -199,7 +217,7 @@ static func _solve_shot(req: KickRequest, r: KickResult, dir: Vector3, distance:
 	var height := lerpf(0.15, 1.9, pow(req.power, 1.5))
 	if req.power > 0.88:
 		height += (req.power - 0.88) * 14.0
-	height += _noise(rng) * 1.2 * (1.0 - r.accuracy)
+	height += _noise(rng) * 2.0 * (1.0 - r.accuracy)
 	if r.mishit:
 		height += rng.randf_range(-0.4, 2.5) * (0.45 - r.contact_quality) * 3.0
 	# Drag makes the ball drop a bit more than the vacuum solution.

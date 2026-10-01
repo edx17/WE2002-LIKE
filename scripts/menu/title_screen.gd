@@ -10,7 +10,8 @@ func _ready() -> void:
 	InputSetup.ensure_actions()
 	var args := " ".join(OS.get_cmdline_user_args())
 	if "--match=" in args or "--attract" in args or "--players=" in args or "--half-minutes=" in args:
-		_go_match("1", true)
+		# Deferred: the tree is still adding this scene when _ready runs.
+		_go_match.call_deferred("1", true)
 		return
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	UIKit.background(self)

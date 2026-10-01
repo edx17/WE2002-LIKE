@@ -224,6 +224,19 @@ Es el cimiento de todos los modos de competición (`scripts/career/`):
 - **Fin de temporada:** dos ascienden y dos descienden, más premios, salarios y contratos.
 - **Guardado:** se guarda en `user://saves/`.
 
+## Firmeza (sensación PS1)
+
+Lo que hace que no se sienta "arcade barato". Todo medible con `tests/firmness_probe.gd`.
+
+| Antes | Ahora |
+|---|---|
+| El rival te la sacaba antes del saque inicial (5 de 6 veces) | El saque es pelota parada: rivales fuera del círculo y en su campo, nadie la toca hasta que la juegues. Si sos humano, esperás lo que quieras (0 de 6) |
+| Pase al compañero: el cursor salta al receptor y, como seguís apretando la dirección, se iba corriendo de la pelota (0 de 48 llegaban) | El receptor va solo a buscar la pelota hasta que muevas el stick a otra dirección; cono de asistencia de 50° (48 de 48) |
+| Desde cualquier lado parecía gol (dispersión de 1–2° aun de 30 m) | Dispersión que crece con la distancia y la falta de precisión; el arquero reacciona (0.12–0.26 s), da pasos en los remates de lejos, se tira justo y agarra los remates normales. Gol ≈ 33% a 12 m, 25% a 18 m, 8% a 25 m, casi nunca de 30 m |
+| Pegarse al que conduce alcanzaba para robarla | Solo se disputa si la pelota quedó lejos del pie (toque largo, giro) y el defensor la mira; para robarla limpia hay que entrar (botón) |
+| Movimiento suave, curvo | Velocidad en dos fases (trote casi al instante, pique completo en ~0.7 s), cada cambio de las 8 direcciones cuesta velocidad (45°: −10%, 90°: −30%, más con pelota), giro de 180° frenando, poses a 20 cuadros por segundo sostenidas (`data/look`: `players.animation_fps`) |
+| La IA pateaba de cualquier lado | Patea desde el área con ángulo; de lejos solo con el arco a la vista y de vez en cuando |
+
 ## Dos jugadores
 
 **1P:** WASD · J pase · K remate · I filtrado · L globo · Shift sprint · Q cambio · joystick 1.
@@ -269,7 +282,7 @@ godot --headless --import --path .
 godot --headless --path . -s tests/test_runner.gd
 ```
 
-110+ comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
+130+ comprobaciones: cuantización, zonas de contacto y fórmulas de patada, más simulaciones
 en el motor real. Distancia de pase y de globo, remate que entra, remate pasado de potencia
 que se va por arriba, conducción en sprint sin perder la pelota, giro de 180°, un remate
 completo con la misma entrada que un humano, el modelo generado con su AnimationTree
@@ -278,8 +291,10 @@ enjambre alrededor de la pelota, distancia entre compañeros, arqueros en su zon
 completados, remates), el cambio de jugador, el fuera de juego (adelantado y habilitado), el
 córner, la barrera, 90 s de 11v11 midiendo la línea de 4 y los pases, y la etapa 4:
 entretiempo y final, energía, roja por último hombre, segunda amarilla, expulsión, penal,
-lateral con la mano, cambios pedidos y del DT, árbitro y menú de pausa. `tests/behavior_probe.gd` compara contra la
-referencia de WE2002. Corren en CI con
+lateral con la mano, cambios pedidos y del DT, árbitro y menú de pausa, y la firmeza: saque
+protegido, pase que llega con el stick apretado, nadie roba sin entrar, cortes "cuadrados",
+dispersión del remate de lejos. `tests/behavior_probe.gd` compara contra la
+referencia de WE2002 y `tests/firmness_probe.gd` mide saque, remates contra arquero y pases. Corren en CI con
 GitHub Actions.
 
 ## Legal

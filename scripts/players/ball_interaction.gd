@@ -64,7 +64,7 @@ func contact_zone(ball_pos: Vector3) -> int:
 		# Keepers use their hands in their own box: longer reach, up to the bar.
 		var flat := Vector2(rel.x, rel.z).length()
 		var diving := player.state == PlayerController.State.DIVE
-		if rel.y < (1.5 if diving else 2.45) and flat < (1.25 if diving else 0.95) and rel.y > -0.2:
+		if rel.y < (2.0 if diving else 2.45) and flat < (1.0 if diving else 0.95) and rel.y > -0.2:
 			return Zone.HANDS
 	var zone := zone_for_height(rel.y)
 	if zone == Zone.NONE:
@@ -118,7 +118,8 @@ func receive(ball: Ball) -> String:
 func _keeper_save(ball: Ball, rel_speed: float) -> String:
 	var gk := player.stats.n(&"goalkeeping")
 	var diving := player.state == PlayerController.State.DIVE
-	var q := gk * (1.0 - clampf((rel_speed - 9.0) / 30.0, 0.0, 0.7)) * (0.82 if diving else 1.0)
+	# Anything up to a firm shot is held; only real thunderbolts get parried.
+	var q := gk * (1.0 - clampf((rel_speed - 14.0) / 30.0, 0.0, 0.7)) * (0.85 if diving else 1.0)
 	if q > 0.42:
 		ball.hold(player)
 		player.match_ctx.on_keeper_save(player, true)
